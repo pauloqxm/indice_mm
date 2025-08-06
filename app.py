@@ -43,53 +43,43 @@ def load_data():
 
 df = load_data()
 
-# Sidebar com filtros
-st.sidebar.header("Filtros")
+# Sidebar com filtros básicos
+st.sidebar.header("Filtros Básicos")
 
-# Seleção de modo (único ou múltiplos anos)
-modo_selecao = st.sidebar.radio(
-    "Seleção de anos:",
-    options=['Ano único', 'Múltiplos anos'],
-    index=0
+# Filtro de mês na sidebar
+mes_selecionado = st.sidebar.selectbox(
+    "Selecione o mês", 
+    options=['Todos'] + sorted(df['Mes'].unique()),
+    format_func=lambda x: 'Todos' if x == 'Todos' else datetime(1900, x, 1).strftime('%B')
 )
 
-anos_disponiveis = sorted(df['Ano'].unique(), reverse=True)
+# Contador de registros na sidebar
+if 'df_filtrado' in locals():
+    st.sidebar.markdown(f"**Registros carregados:** {len(df_filtrado)} dia{'s' if len(df_filtrado) != 1 else ''}")
 
-if modo_selecao == 'Ano único':
-    ano_selecionado = st.sidebar.selectbox("Selecione o ano", anos_disponiveis)
-    anos_selecionados = [ano_selecionado]
-else:
-    anos_selecionados = st.sidebar.multiselect(
-        "Selecione os anos", 
-        options=anos_disponiveis,
-        default=[anos_disponiveis[0]]
-    )
-
-# Filtro de mês (apenas quando um único ano estiver selecionado)
-if len(anos_selecionados) == 1:
-    meses_disponiveis = sorted(df[df['Ano'] == anos_selecionados[0]]['Mes'].unique())
-    mes_selecionado = st.sidebar.selectbox(
-        "Selecione o mês", 
-        options=['Todos'] + meses_disponiveis,
-        format_func=lambda x: 'Todos' if x == 'Todos' else datetime(1900, x, 1).strftime('%B')
-    )
-else:
-    mes_selecionado = 'Todos'
+# Slider de anos no corpo principal
+st.subheader("Seleção de Período")
+anos_disponiveis = sorted(df['Ano'].unique())
+ano_min, ano_max = st.slider(
+    "Selecione o intervalo de anos:",
+    min_value=min(anos_disponiveis),
+    max_value=max(anos_disponiveis),
+    value=(min(anos_disponiveis), max(anos_disponiveis)),
+    step=1
+)
 
 # Aplicar filtros iniciais
-df_filtrado_ano = df[df['Ano'].isin(anos_selecionados)]
+df_filtrado_ano = df[(df['Ano'] >= ano_min) & (df['Ano'] <= ano_max)]
 if mes_selecionado != 'Todos':
     df_filtrado_ano = df_filtrado_ano[df_filtrado_ano['Mes'] == mes_selecionado]
 
-# Contador interativo de registros
-st.sidebar.markdown(f"**Registros carregados:** {len(df_filtrado_ano)} dia{'s' if len(df_filtrado_ano) != 1 else ''}")
-
-# Seleção de período com slider de data (após filtros iniciais)
+# Seleção de período específico com slider de data
+st.subheader("Refinar Período")
 if len(df_filtrado_ano) > 0:
     data_min = df_filtrado_ano['data'].min().to_pydatetime()
     data_max = df_filtrado_ano['data'].max().to_pydatetime()
-    data_range = st.sidebar.slider(
-        "Selecione o período específico",
+    data_range = st.slider(
+        "Selecione o período específico:",
         min_value=data_min,
         max_value=data_max,
         value=(data_min, data_max),
@@ -103,11 +93,7 @@ if len(df_filtrado_ano) > 0:
     ]
 else:
     df_filtrado = pd.DataFrame()
-    st.sidebar.warning("Nenhum dado disponível para os filtros selecionados")
-
-# Atualizar contador após filtro de período
-if len(df_filtrado_ano) > 0:
-    st.sidebar.markdown(f"**Período selecionado:** {len(df_filtrado)} dia{'s' if len(df_filtrado) != 1 else ''}")
+    st.warning("Nenhum dado disponível para os filtros selecionados")
 
 # Calcular períodos secos (apenas para o período filtrado)
 if len(df_filtrado) > 0:
@@ -118,15 +104,10 @@ else:
     qtd_periodos_secos = 0
 
 # Layout principal
-if len(anos_selecionados) == 1:
-    titulo = f"Análise de Precipitação - {anos_selecionados[0]}"
-    if mes_selecionado != 'Todos':
-        nome_mes = datetime(1900, mes_selecionado, 1).strftime('%B')
-        titulo += f" - {nome_mes}"
-else:
-    anos_str = ", ".join(map(str, sorted(anos_selecionados)))
-    titulo = f"Análise de Precipitação - Anos: {anos_str}"
-    
+titulo = f"Análise de Precipitação ({ano_min}-{ano_max})"
+if mes_selecionado != 'Todos':
+    nome_mes = datetime(1900, mes_selecionado, 1).strftime('%B')
+    titulo += f" - {nome_mes}"
 st.title(titulo)
 
 # Métricas
@@ -150,30 +131,28 @@ if len(df_filtrado) > 0:
                      color='Precipitacao',
                      color_continuous_scale='Blues')
         
-        # Adicionar linha de média se múltiplos anos
-        if len(anos_selecionados) > 1:
-            media = df_filtrado.groupby(df_filtrado['data'].dt.dayofyear)['Precipitacao'].mean().reset_index()
-            fig1.add_scatter(x=df_filtrado['data'].unique(), y=media['Precipitacao'],
-                           mode='lines', name='Média', line=dict(color='red', width=2))
+        # Adicionar linha de média por dia do ano para comparação entre anos
+        if (ano_max - ano_min) > 0:
+            df_filtrado['Dia_Ano'] = df_filtrado['data'].dt.dayofyear
+            media_diaria = df_filtrado.groupby('Dia_Ano')['Precipitacao'].mean().reset_index()
+            fig1.add_scatter(x=df_filtrado['data'], y=media_diaria['Precipitacao'],
+                           mode='lines', name='Média Anual', line=dict(color='red', width=2))
         
         st.plotly_chart(fig1, use_container_width=True)
 
     with tab2:
         st.subheader("Análise Mensal")
-        mensal = df_filtrado.groupby(['Mes', 'Mes_Nome']).agg({
+        mensal = df_filtrado.groupby(['Ano', 'Mes', 'Mes_Nome']).agg({
             'Precipitacao': 'sum',
             'Dia Úmido': 'sum',
             'Dia Seco': 'sum'
-        }).reset_index().sort_values('Mes')
+        }).reset_index().sort_values(['Ano', 'Mes'])
 
         fig2 = px.bar(mensal, x='Mes_Nome', y='Precipitacao',
                      labels={'Mes_Nome': 'Mês', 'Precipitacao': 'Precipitação Total (mm)'},
+                     color='Ano',
+                     barmode='group',
                      text='Precipitacao')
-        
-        # Adicionar comparação se múltiplos anos
-        if len(anos_selecionados) > 1:
-            fig2.update_layout(barmode='group')
-        
         st.plotly_chart(fig2, use_container_width=True)
 
     with tab3:
@@ -186,7 +165,7 @@ if len(df_filtrado) > 0:
         else:
             st.info("Nenhum período seco identificado no período selecionado.")
 
-# Informações adicionais
+# Informações adicionais na sidebar
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Definições:**")
 st.sidebar.markdown("- **Dia Úmido:** Precipitação ≥ 1 mm")
