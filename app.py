@@ -1,15 +1,20 @@
 
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
 
+# Configuração da página
 st.set_page_config(page_title="Dashboard de Precipitação", layout="wide")
 
+# Carregar e processar dados
 @st.cache_data
 def load_data():
+    # Carrega os dados substituindo vírgulas por pontos nos decimais
     df = pd.read_csv("indice_mm.csv", sep=";", decimal=",")
     
+    # Processamento de datas
     if 'data' in df.columns:
         df['data'] = pd.to_datetime(df['data'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['data'])
@@ -18,14 +23,21 @@ def load_data():
         st.error("Coluna 'data' não encontrada no arquivo.")
         st.stop()
 
+    # Garantir que a coluna de precipitação está numérica
     precip_col = df.columns[1]
-    df['Precipitacao'] = pd.to_numeric(df[precip_col].astype(str).str.replace(',', '.'), errors='coerce')
+    df['Precipitacao'] = pd.to_numeric(
+        df[precip_col].astype(str).str.replace(',', '.'), 
+        errors='coerce'
+    )
     df = df.dropna(subset=['Precipitacao'])
-
+    
+    # Extrair ano e mês
     df['Ano'] = df['data'].dt.year
     df['Mes'] = df['data'].dt.month
     df['Mes_Nome'] = df['data'].dt.month_name()
     df['Dia_do_Ano'] = df['data'].dt.dayofyear
+
+    # Classificar dias
     df['Dia Úmido'] = df['Precipitacao'] >= 1
     df['Dia Seco'] = df['Precipitacao'] < 1
 
@@ -33,14 +45,22 @@ def load_data():
 
 df = load_data()
 
+# Sidebar com filtros básicos
 st.sidebar.header("Filtros Básicos")
 
+# Filtro de mês na sidebar
 mes_selecionado = st.sidebar.selectbox(
     "Selecione o mês", 
     options=['Todos'] + sorted(df['Mes'].unique()),
     format_func=lambda x: 'Todos' if x == 'Todos' else datetime(1900, x, 1).strftime('%B')
 )
 
+# Contador de registros na sidebar
+if 'df_filtrado' in locals():
+    st.sidebar.markdown(f"**Registros carregados:** {len(df_filtrado)} dia{'s' if len(df_filtrado) != 1 else ''}")
+
+# Slider de anos no corpo principal
+st.subheader("Seleção de Período")
 anos_disponiveis = sorted(df['Ano'].unique())
 ano_min, ano_max = st.slider(
     "Selecione o intervalo de anos:",
@@ -50,10 +70,12 @@ ano_min, ano_max = st.slider(
     step=1
 )
 
+# Aplicar filtros iniciais
 df_filtrado_ano = df[(df['Ano'] >= ano_min) & (df['Ano'] <= ano_max)]
 if mes_selecionado != 'Todos':
     df_filtrado_ano = df_filtrado_ano[df_filtrado_ano['Mes'] == mes_selecionado]
 
+# Seleção de período específico com slider de data
 st.subheader("Refinar Período")
 if len(df_filtrado_ano) > 0:
     data_min = df_filtrado_ano['data'].min().to_pydatetime()
@@ -66,6 +88,7 @@ if len(df_filtrado_ano) > 0:
         format="DD/MM/YYYY"
     )
 
+    # Aplicar filtro de período
     df_filtrado = df_filtrado_ano[
         (df_filtrado_ano['data'] >= data_range[0]) & 
         (df_filtrado_ano['data'] <= data_range[1])
@@ -74,6 +97,7 @@ else:
     df_filtrado = pd.DataFrame()
     st.warning("Nenhum dado disponível para os filtros selecionados")
 
+# Calcular períodos secos (apenas para o período filtrado)
 if len(df_filtrado) > 0:
     df_filtrado['Seco_Grupo'] = (df_filtrado['Dia Seco'] != df_filtrado['Dia Seco'].shift()).cumsum()
     periodos_secos = df_filtrado[df_filtrado['Dia Seco']].groupby('Seco_Grupo').size()
@@ -81,12 +105,14 @@ if len(df_filtrado) > 0:
 else:
     qtd_periodos_secos = 0
 
+# Layout principal
 titulo = f"Análise de Precipitação ({ano_min}-{ano_max})"
 if mes_selecionado != 'Todos':
     nome_mes = datetime(1900, mes_selecionado, 1).strftime('%B')
     titulo += f" - {nome_mes}"
 st.title(titulo)
 
+# Métricas
 if len(df_filtrado) > 0:
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Precipitação Total (mm)", f"{round(df_filtrado['Precipitacao'].sum(), 1)} mm")
@@ -96,13 +122,9 @@ if len(df_filtrado) > 0:
 else:
     st.warning("Nenhum dado disponível para os filtros selecionados")
 
+# Gráficos
 if len(df_filtrado) > 0:
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "Precipitação Diária", 
-        "Análise Mensal", 
-        "Períodos Secos", 
-        "Média Anual por Dia"
-    ])
+    tab1, tab2, tab3 = st.tabs(["Precipitação Diária", "Análise Mensal", "Períodos Secos"])
 
     with tab1:
         st.subheader("Precipitação Diária")
@@ -110,6 +132,14 @@ if len(df_filtrado) > 0:
                      labels={'data': 'Data', 'Precipitacao': 'Precipitação (mm)'},
                      color='Precipitacao',
                      color_continuous_scale='Blues')
+        
+        # Adicionar linha de média por dia do ano para comparação entre anos
+        if (ano_max - ano_min) > 0:
+            df_filtrado['Dia_Ano'] = df_filtrado['data'].dt.dayofyear
+            media_diaria = df_filtrado.groupby('Dia_Ano')['Precipitacao'].mean().reset_index()
+            fig1.add_scatter(x=df_filtrado['data'], y=media_diaria['Precipitacao'],
+                           mode='lines', name='Média Anual', line=dict(color='red', width=2))
+        
         st.plotly_chart(fig1, use_container_width=True)
 
     with tab2:
@@ -137,16 +167,7 @@ if len(df_filtrado) > 0:
         else:
             st.info("Nenhum período seco identificado no período selecionado.")
 
-    with tab4:
-        st.subheader("Média de Precipitação por Dia do Ano")
-        media_diaria = df_filtrado.copy()
-        media_diaria['Dia_Ano'] = media_diaria['data'].dt.dayofyear
-        media_diaria = media_diaria.groupby('Dia_Ano')['Precipitacao'].mean().reset_index()
-        fig4 = px.line(media_diaria, x='Dia_Ano', y='Precipitacao',
-                       labels={'Dia_Ano': 'Dia do Ano', 'Precipitacao': 'Precipitação Média (mm)'},
-                       title="Média Anual de Precipitação por Dia do Ano")
-        st.plotly_chart(fig4, use_container_width=True)
-
+# Informações adicionais na sidebar
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Definições:**")
 st.sidebar.markdown("- **Dia Úmido:** Precipitação ≥ 1 mm")
