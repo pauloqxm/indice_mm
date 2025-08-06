@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -46,23 +47,9 @@ df = load_data()
 # Sidebar com filtros
 st.sidebar.header("Filtros")
 
-# Layout com seletores de ano em ambas as extremidades
-col1, col2, col3 = st.sidebar.columns([1, 3, 1])
-with col1:
-    st.write("")  # Espaçamento
-with col2:
-    st.write("Selecione o ano:")
-with col3:
-    st.write("")  # Espaçamento
-
-# Slider de ano centralizado
+# Filtro de ano na sidebar
 anos_disponiveis = sorted(df['Ano'].unique(), reverse=True)
-ano_selecionado = st.sidebar.select_slider(
-    "",
-    options=anos_disponiveis,
-    value=max(anos_disponiveis),
-    label_visibility="collapsed"
-)
+ano_selecionado = st.sidebar.selectbox("Selecione o ano", anos_disponiveis)
 
 # Filtro de mês na sidebar (apenas para o ano selecionado)
 meses_disponiveis = sorted(df[df['Ano'] == ano_selecionado]['Mes'].unique())
