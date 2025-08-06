@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -10,20 +9,26 @@ st.set_page_config(page_title="Dashboard de Precipitação", layout="wide")
 # Carregar e processar dados
 @st.cache_data
 def load_data():
+    # Carrega os dados substituindo vírgulas por pontos nos decimais
     df = pd.read_csv("indice_mmm.csv", sep=";", decimal=",")
-
+    
     # Processamento de datas
     if 'data' in df.columns:
-        df['data'] = pd.to_datetime(df['data'], errors='coerce')
+        df['data'] = pd.to_datetime(df['data'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['data'])
         df = df.sort_values('data')
     else:
         st.error("Coluna 'data' não encontrada no arquivo.")
         st.stop()
 
-    # Renomear coluna de precipitação
-    df.rename(columns={df.columns[1]: 'Precipitacao'}, inplace=True)
-
+    # Garantir que a coluna de precipitação está numérica
+    precip_col = df.columns[1]
+    df['Precipitacao'] = pd.to_numeric(
+        df[precip_col].astype(str).str.replace(',', '.'), 
+        errors='coerce'
+    )
+    df = df.dropna(subset=['Precipitacao'])
+    
     # Extrair ano e mês
     df['Ano'] = df['data'].dt.year
     df['Mes'] = df['data'].dt.month
