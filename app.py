@@ -43,35 +43,42 @@ def load_data():
 
 df = load_data()
 
-# Sidebar com filtros básicos
-st.sidebar.header("Filtros Básicos")
+# Sidebar com filtros
+st.sidebar.header("Filtros")
 
-# Filtro de mês na sidebar
-mes_selecionado = st.sidebar.selectbox(
-    "Selecione o mês", 
-    options=['Todos'] + sorted(df['Mes'].unique()),
-    format_func=lambda x: 'Todos' if x == 'Todos' else datetime(1900, x, 1).strftime('%B')
+# Layout com seletores de ano em ambas as extremidades
+col1, col2, col3 = st.sidebar.columns([1, 3, 1])
+with col1:
+    st.write("")  # Espaçamento
+with col2:
+    st.write("Selecione o ano:")
+with col3:
+    st.write("")  # Espaçamento
+
+# Slider de ano centralizado
+anos_disponiveis = sorted(df['Ano'].unique(), reverse=True)
+ano_selecionado = st.sidebar.select_slider(
+    "",
+    options=anos_disponiveis,
+    value=max(anos_disponiveis),
+    label_visibility="collapsed"
 )
 
-# Contador de registros na sidebar
-if 'df_filtrado' in locals():
-    st.sidebar.markdown(f"**Registros carregados:** {len(df_filtrado)} dia{'s' if len(df_filtrado) != 1 else ''}")
-
-# Slider de anos no corpo principal (acima do título)
-st.subheader("Seleção de Ano")
-anos_disponiveis = sorted(df['Ano'].unique())
-ano_selecionado = st.slider(
-    "Selecione o ano:",
-    min_value=min(anos_disponiveis),
-    max_value=max(anos_disponiveis),
-    value=max(anos_disponiveis),  # Ano mais recente como padrão
-    step=1
+# Filtro de mês na sidebar (apenas para o ano selecionado)
+meses_disponiveis = sorted(df[df['Ano'] == ano_selecionado]['Mes'].unique())
+mes_selecionado = st.sidebar.selectbox(
+    "Selecione o mês", 
+    options=['Todos'] + meses_disponiveis,
+    format_func=lambda x: 'Todos' if x == 'Todos' else datetime(1900, x, 1).strftime('%B')
 )
 
 # Aplicar filtros
 df_filtrado = df[df['Ano'] == ano_selecionado]
 if mes_selecionado != 'Todos':
     df_filtrado = df_filtrado[df_filtrado['Mes'] == mes_selecionado]
+
+# Contador de registros na sidebar
+st.sidebar.markdown(f"**Registros carregados:** {len(df_filtrado)} dia{'s' if len(df_filtrado) != 1 else ''}")
 
 # Calcular períodos secos
 df_filtrado['Seco_Grupo'] = (df_filtrado['Dia Seco'] != df_filtrado['Dia Seco'].shift()).cumsum()
@@ -126,7 +133,7 @@ with tab3:
     else:
         st.info("Nenhum período seco identificado no período selecionado.")
 
-# Informações adicionais na sidebar
+# Informações adicionais
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Definições:**")
 st.sidebar.markdown("- **Dia Úmido:** Precipitação ≥ 1 mm")
