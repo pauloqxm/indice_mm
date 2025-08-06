@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from datetime import datetime
 
 # Carregar dados
 df = pd.read_csv("indice_mm.csv")
@@ -31,10 +32,13 @@ anos_disponiveis = df['Ano'].dropna().unique()
 ano_selecionado = st.selectbox("Selecione o ano", sorted(anos_disponiveis, reverse=True))
 df_ano = df[df['Ano'] == ano_selecionado]
 
-data_min = df_ano['data'].min()
-data_max = df_ano['data'].max()
-data_range = st.slider("Selecione o período", min_value=data_min, max_value=data_max,
-                       value=(data_min, data_max))
+data_min = df_ano['data'].min().to_pydatetime()
+data_max = df_ano['data'].max().to_pydatetime()
+data_range = st.slider("Selecione o período",
+                       min_value=data_min,
+                       max_value=data_max,
+                       value=(data_min, data_max),
+                       format="DD/MM/YYYY")
 df_filtrado = df_ano[(df_ano['data'] >= data_range[0]) & (df_ano['data'] <= data_range[1])]
 
 # Título
