@@ -5,7 +5,7 @@ import plotly.express as px
 from datetime import datetime
 
 # Carregar dados
-df = pd.read_csv("indice_mm.csv")
+df = pd.read_csv("indice_mm.csv", sep=";", decimal=",")
 
 # Processar datas
 if 'data' in df.columns:
