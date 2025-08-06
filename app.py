@@ -10,7 +10,7 @@ st.set_page_config(page_title="Dashboard de Precipitação", layout="wide")
 # Carregar e processar dados
 @st.cache_data
 def load_data():
-    df = pd.read_csv("indice_mm.csv", sep=";", decimal=",")
+    df = pd.read_csv("indice_mmm.csv", sep=";", decimal=",")
     
     # Processamento de datas
     if 'data' in df.columns:
