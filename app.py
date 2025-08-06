@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -75,6 +73,13 @@ df_filtrado_ano = df[(df['Ano'] >= ano_min) & (df['Ano'] <= ano_max)]
 if mes_selecionado != 'Todos':
     df_filtrado_ano = df_filtrado_ano[df_filtrado_ano['Mes'] == mes_selecionado]
 
+# Cálculo da média anual para todos os anos selecionados
+media_anual = df_filtrado_ano.groupby('Ano').agg({
+    'Precipitacao': 'sum',
+    'Dia Úmido': 'sum',
+    'Dia Seco': 'sum'
+}).mean()
+
 # Seleção de período específico com slider de data
 st.subheader("Refinar Período")
 if len(df_filtrado_ano) > 0:
@@ -112,13 +117,22 @@ if mes_selecionado != 'Todos':
     titulo += f" - {nome_mes}"
 st.title(titulo)
 
-# Métricas
+# Métricas (usando média anual quando múltiplos anos são selecionados)
 if len(df_filtrado) > 0:
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Precipitação Total (mm)", f"{round(df_filtrado['Precipitacao'].sum(), 1)} mm")
-    col2.metric("Dias Úmidos (≥1 mm)", f"{int(df_filtrado['Dia Úmido'].sum())} dias")
-    col3.metric("Dias Secos (<1 mm)", f"{int(df_filtrado['Dia Seco'].sum())} dias")
-    col4.metric("Períodos Secos", f"{qtd_periodos_secos} períodos")
+    
+    if (ano_max - ano_min) > 0:
+        # Média anual para múltiplos anos
+        col1.metric("Precipitação Média Anual (mm)", f"{round(media_anual['Precipitacao'], 1)} mm")
+        col2.metric("Dias Úmidos Médios (≥1 mm)", f"{round(media_anual['Dia Úmido'], 1)} dias")
+        col3.metric("Dias Secos Médios (<1 mm)", f"{round(media_anual['Dia Seco'], 1)} dias")
+        col4.metric("Períodos Secos", f"{qtd_periodos_secos} períodos")
+    else:
+        # Valores exatos para um único ano
+        col1.metric("Precipitação Total (mm)", f"{round(df_filtrado['Precipitacao'].sum(), 1)} mm")
+        col2.metric("Dias Úmidos (≥1 mm)", f"{int(df_filtrado['Dia Úmido'].sum())} dias")
+        col3.metric("Dias Secos (<1 mm)", f"{int(df_filtrado['Dia Seco'].sum())} dias")
+        col4.metric("Períodos Secos", f"{qtd_periodos_secos} períodos")
 else:
     st.warning("Nenhum dado disponível para os filtros selecionados")
 
@@ -155,6 +169,13 @@ if len(df_filtrado) > 0:
                      color='Ano',
                      barmode='group',
                      text='Precipitacao')
+        
+        # Adicionar linha de média mensal se múltiplos anos
+        if (ano_max - ano_min) > 0:
+            media_mensal = mensal.groupby('Mes')['Precipitacao'].mean().reset_index()
+            fig2.add_scatter(x=mensal['Mes_Nome'].unique(), y=media_mensal['Precipitacao'],
+                           mode='lines', name='Média Mensal', line=dict(color='black', width=2))
+        
         st.plotly_chart(fig2, use_container_width=True)
 
     with tab3:
