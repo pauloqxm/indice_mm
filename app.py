@@ -7,12 +7,12 @@ import matplotlib.pyplot as plt
 df = pd.read_csv("indice_mm.csv")
 
 # Verifica se há uma coluna de data
-if 'Data' in df.columns:
-    df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
-    df = df.dropna(subset=['Data'])
-    df = df.sort_values('Data')
+if 'data' in df.columns:
+    df['data'] = pd.to_datetime(df['data'], errors='coerce')
+    df = df.dropna(subset=['data'])
+    df = df.sort_values('data')
 else:
-    st.error("Coluna 'Data' não encontrada.")
+    st.error("Coluna 'data' não encontrada.")
     st.stop()
 
 # Renomeia a coluna de precipitação para facilitar
@@ -41,9 +41,9 @@ col4.metric("Períodos de Dias Secos", qtd_periodos_secos)
 # Gráfico de linha da precipitação
 st.subheader("Precipitação Diária")
 fig, ax = plt.subplots(figsize=(10, 4))
-ax.plot(df['Data'], df['Precipitacao'], label='Precipitação (mm)', color='blue')
+ax.plot(df['data'], df['Precipitacao'], label='Precipitação (mm)', color='blue')
 ax.set_ylabel('mm')
-ax.set_xlabel('Data')
+ax.set_xlabel('data')
 ax.set_title('Histórico de Precipitação')
 ax.grid(True)
 st.pyplot(fig)
