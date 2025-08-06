@@ -10,7 +10,7 @@ st.set_page_config(page_title="Dashboard de Precipitação", layout="wide")
 @st.cache_data
 def load_data():
     # Carrega os dados substituindo vírgulas por pontos nos decimais
-    df = pd.read_csv("indice_mm.csv", sep=";", decimal=",")
+    df = pd.read_csv("indice_mmm.csv", sep=";", decimal=",")
     
     # Processamento de datas
     if 'data' in df.columns:
@@ -43,28 +43,35 @@ def load_data():
 
 df = load_data()
 
-# Sidebar com filtros
-st.sidebar.header("Filtros")
+# Sidebar com filtros básicos
+st.sidebar.header("Filtros Básicos")
 
-# Filtro de ano na sidebar
-anos_disponiveis = sorted(df['Ano'].unique(), reverse=True)
-ano_selecionado = st.sidebar.selectbox("Selecione o ano", anos_disponiveis)
-
-# Filtro de mês na sidebar (apenas para o ano selecionado)
-meses_disponiveis = sorted(df[df['Ano'] == ano_selecionado]['Mes'].unique())
+# Filtro de mês na sidebar
 mes_selecionado = st.sidebar.selectbox(
     "Selecione o mês", 
-    options=['Todos'] + meses_disponiveis,
+    options=['Todos'] + sorted(df['Mes'].unique()),
     format_func=lambda x: 'Todos' if x == 'Todos' else datetime(1900, x, 1).strftime('%B')
+)
+
+# Contador de registros na sidebar
+if 'df_filtrado' in locals():
+    st.sidebar.markdown(f"**Registros carregados:** {len(df_filtrado)} dia{'s' if len(df_filtrado) != 1 else ''}")
+
+# Slider de anos no corpo principal (acima do título)
+st.subheader("Seleção de Ano")
+anos_disponiveis = sorted(df['Ano'].unique())
+ano_selecionado = st.slider(
+    "Selecione o ano:",
+    min_value=min(anos_disponiveis),
+    max_value=max(anos_disponiveis),
+    value=max(anos_disponiveis),  # Ano mais recente como padrão
+    step=1
 )
 
 # Aplicar filtros
 df_filtrado = df[df['Ano'] == ano_selecionado]
 if mes_selecionado != 'Todos':
     df_filtrado = df_filtrado[df_filtrado['Mes'] == mes_selecionado]
-
-# Contador de registros na sidebar
-st.sidebar.markdown(f"**Registros carregados:** {len(df_filtrado)} dia{'s' if len(df_filtrado) != 1 else ''}")
 
 # Calcular períodos secos
 df_filtrado['Seco_Grupo'] = (df_filtrado['Dia Seco'] != df_filtrado['Dia Seco'].shift()).cumsum()
@@ -119,7 +126,7 @@ with tab3:
     else:
         st.info("Nenhum período seco identificado no período selecionado.")
 
-# Informações adicionais
+# Informações adicionais na sidebar
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Definições:**")
 st.sidebar.markdown("- **Dia Úmido:** Precipitação ≥ 1 mm")
