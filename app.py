@@ -48,24 +48,41 @@ st.sidebar.header("Filtros")
 anos_disponiveis = sorted(df['Ano'].unique(), reverse=True)
 ano_selecionado = st.sidebar.selectbox("Selecione o ano", anos_disponiveis)
 
-df_ano = df[df['Ano'] == ano_selecionado]
+# Filtro de mês (apenas para o ano selecionado)
+meses_disponiveis = sorted(df[df['Ano'] == ano_selecionado]['Mes'].unique())
+mes_selecionado = st.sidebar.selectbox(
+    "Selecione o mês", 
+    options=['Todos'] + meses_disponiveis,
+    format_func=lambda x: 'Todos' if x == 'Todos' else datetime(1900, x, 1).strftime('%B')
+)
 
-# DEBUG: Exibir quantidade de registros carregados no ano selecionado
-st.sidebar.markdown(f"**Registros carregados:** {len(df_ano)} dias")
+# Aplicar filtros iniciais
+df_filtrado_ano = df[df['Ano'] == ano_selecionado]
+if mes_selecionado != 'Todos':
+    df_filtrado_ano = df_filtrado_ano[df_filtrado_ano['Mes'] == mes_selecionado]
 
-# Seleção de período com slider de data
-data_min = df_ano['data'].min().to_pydatetime()
-data_max = df_ano['data'].max().to_pydatetime()
+# Contador interativo de registros
+st.sidebar.markdown(f"**Registros carregados:** {len(df_filtrado_ano)} dia{'s' if len(df_filtrado_ano) != 1 else ''}")
+
+# Seleção de período com slider de data (após filtros iniciais)
+data_min = df_filtrado_ano['data'].min().to_pydatetime()
+data_max = df_filtrado_ano['data'].max().to_pydatetime()
 data_range = st.sidebar.slider(
-    "Selecione o período",
+    "Selecione o período específico",
     min_value=data_min,
     max_value=data_max,
     value=(data_min, data_max),
     format="DD/MM/YYYY"
 )
 
-# Aplicar filtros
-df_filtrado = df_ano[(df_ano['data'] >= data_range[0]) & (df_ano['data'] <= data_range[1])]
+# Aplicar filtro de período
+df_filtrado = df_filtrado_ano[
+    (df_filtrado_ano['data'] >= data_range[0]) & 
+    (df_filtrado_ano['data'] <= data_range[1])
+]
+
+# Atualizar contador após filtro de período
+st.sidebar.markdown(f"**Período selecionado:** {len(df_filtrado)} dia{'s' if len(df_filtrado) != 1 else ''}")
 
 # Calcular períodos secos (apenas para o período filtrado)
 df_filtrado['Seco_Grupo'] = (df_filtrado['Dia Seco'] != df_filtrado['Dia Seco'].shift()).cumsum()
@@ -73,7 +90,11 @@ periodos_secos = df_filtrado[df_filtrado['Dia Seco']].groupby('Seco_Grupo').size
 qtd_periodos_secos = len(periodos_secos)
 
 # Layout principal
-st.title(f"Análise de Precipitação - {ano_selecionado}")
+titulo = f"Análise de Precipitação - {ano_selecionado}"
+if mes_selecionado != 'Todos':
+    nome_mes = datetime(1900, mes_selecionado, 1).strftime('%B')
+    titulo += f" - {nome_mes}"
+st.title(titulo)
 
 # Métricas
 col1, col2, col3, col4 = st.columns(4)
