@@ -11,7 +11,7 @@ st.set_page_config(page_title="Dashboard de Precipitação", layout="wide")
 @st.cache_data
 def load_data():
     df = pd.read_csv("indice_mmm.csv", sep=";", decimal=",")
-    
+
     # Processamento de datas
     if 'data' in df.columns:
         df['data'] = pd.to_datetime(df['data'], errors='coerce')
@@ -20,20 +20,20 @@ def load_data():
     else:
         st.error("Coluna 'data' não encontrada no arquivo.")
         st.stop()
-    
+
     # Renomear coluna de precipitação
     df.rename(columns={df.columns[1]: 'Precipitacao'}, inplace=True)
-    
+
     # Extrair ano e mês
     df['Ano'] = df['data'].dt.year
     df['Mes'] = df['data'].dt.month
     df['Mes_Nome'] = df['data'].dt.month_name()
     df['Dia_do_Ano'] = df['data'].dt.dayofyear
-    
+
     # Classificar dias
     df['Dia Úmido'] = df['Precipitacao'] >= 1
     df['Dia Seco'] = df['Precipitacao'] < 1
-    
+
     return df
 
 df = load_data()
@@ -44,6 +44,9 @@ anos_disponiveis = sorted(df['Ano'].unique(), reverse=True)
 ano_selecionado = st.sidebar.selectbox("Selecione o ano", anos_disponiveis)
 
 df_ano = df[df['Ano'] == ano_selecionado]
+
+# DEBUG: Exibir quantidade de registros carregados no ano selecionado
+st.sidebar.markdown(f"**Registros carregados:** {len(df_ano)} dias")
 
 # Seleção de período com slider de data
 data_min = df_ano['data'].min().to_pydatetime()
@@ -92,7 +95,7 @@ with tab2:
         'Dia Úmido': 'sum',
         'Dia Seco': 'sum'
     }).reset_index().sort_values('Mes')
-    
+
     fig2 = px.bar(mensal, x='Mes_Nome', y='Precipitacao',
                  labels={'Mes_Nome': 'Mês', 'Precipitacao': 'Precipitação Total (mm)'},
                  text='Precipitacao')
