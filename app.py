@@ -12,7 +12,7 @@ st.markdown(
     "Calcule **Média da Precipitação em Dias Úmidos**, "
     "**Duração Média dos Períodos Secos** e **HY-INT** "
     "(adimensional, normalizado pela média da amostra). "
-    "Agora com **gráficos interativos em Plotly**."
+    "Agora com **gráficos interativos em Plotly** e **filtro por intervalo de anos**."
 )
 
 # Parâmetros ajustáveis
@@ -127,6 +127,28 @@ else:
     df["_pr"] = pd.to_numeric(df[precip_col], errors="coerce")
 df["_pr"] = df["_pr"].fillna(0.0)
 df = df.dropna(subset=["_date"]).sort_values("_date").reset_index(drop=True)
+
+# ========== NOVO: Filtro por intervalo de anos ==========
+df["ano"] = df["_date"].dt.year
+min_year = int(df["ano"].min())
+max_year = int(df["ano"].max())
+# Garante valores válidos (slider de faixa)
+if min_year > max_year:
+    min_year, max_year = max_year, min_year
+if min_year == max_year:
+    year_range = (min_year, max_year)
+    st.info(f"Dados disponíveis apenas para o ano {min_year}.")
+else:
+    year_range = st.slider(
+        "Selecione o intervalo de anos",
+        min_value=min_year,
+        max_value=max_year,
+        value=(min_year, max_year),
+        step=1,
+    )
+# Aplica filtro
+df = df[(df["ano"] >= year_range[0]) & (df["ano"] <= year_range[1])].copy()
+st.caption(f"Período filtrado: {year_range[0]}–{year_range[1]}")
 
 # ----------------- Cálculo dos índices -----------------
 if group_sel != "(sem agrupamento)":
