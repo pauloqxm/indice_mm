@@ -25,6 +25,29 @@ def parse_date_pt(s):
             continue
     return pd.NaT
 
+def safe_read_csv(path):
+    """Tenta ler CSV com diferentes encodings e separadores."""
+    encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252"]
+    # Primeiro: autodetect sep com engine=python
+    for enc in encodings:
+        try:
+            return pd.read_csv(path, encoding=enc, sep=None, engine="python")
+        except Exception:
+            pass
+    # Segundo: tentar separador ';'
+    for enc in encodings:
+        try:
+            return pd.read_csv(path, encoding=enc, sep=";")
+        except Exception:
+            pass
+    # Último: tentar separador ',' com errors='ignore' via open
+    for enc in encodings:
+        try:
+            return pd.read_csv(path, encoding=enc)
+        except Exception:
+            pass
+    raise RuntimeError("Falha ao ler o CSV. Verifique encoding/ separador.")
+
 def compute_segments(d, dry_thr):
     is_dry = d["_pr"] <= dry_thr
     seg_id = (is_dry != is_dry.shift(1)).cumsum()
@@ -59,7 +82,15 @@ file_path = os.path.join(os.path.dirname(__file__), "indice_hy.csv")
 if not os.path.exists(file_path):
     st.error(f"Arquivo {file_path} não encontrado. Coloque o 'indice_hy.csv' no mesmo diretório do app.")
 else:
-    df = pd.read_csv(file_path)
+    # ==== Leitura robusta ====
+    try:
+        df = safe_read_csv(file_path)
+    except Exception as e:
+        st.exception(e)
+        st.stop()
+
+    # Limpeza de nomes de colunas
+    df.columns = [str(c).strip() for c in df.columns]
 
     precip_cols = [c for c in df.columns if c.strip().lower() in ["precipitacao","precipitação","chuva","pp","prcp","precisao","precisão"]]
     date_cols = [c for c in df.columns if c.strip().lower() in ["data","date","dia"]]
@@ -70,9 +101,16 @@ else:
     group_opt = ["(sem agrupamento)"] + (group_cols or [])
     group_sel = st.selectbox("Coluna de agrupamento (opcional)", group_opt)
 
+    # Conversões
     df["_date"] = df[date_col].apply(parse_date_pt)
+    # tratar números com vírgula decimal
+    if df[precip_col].dtype == object:
+        df["_pr"] = pd.to_numeric(df[precip_col].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False), errors="coerce")
+    else:
+        df["_pr"] = pd.to_numeric(df[precip_col], errors="coerce")
+    df["_pr"] = df["_pr"].fillna(0.0)
+
     df = df.dropna(subset=["_date"]).sort_values("_date").reset_index(drop=True)
-    df["_pr"] = pd.to_numeric(df[precip_col], errors="coerce").fillna(0.0)
 
     if group_sel != "(sem agrupamento)":
         res = df.groupby(group_sel, as_index=False).apply(lambda g: compute_metrics(g, wet_thr, dry_thr)).reset_index(drop=True)
@@ -102,7 +140,6 @@ else:
     else:
         dplot = df.sort_values("_date").copy()
 
-    # Série temporal
     st.markdown("**Série temporal de precipitação diária (mm)**")
     fig1 = plt.figure()
     plt.plot(dplot["_date"], dplot["_pr"])
@@ -111,14 +148,13 @@ else:
     plt.title("Precipitação diária")
     st.pyplot(fig1)
 
-    # Histograma períodos secos
     st.markdown("**Distribuição das durações dos períodos secos (dias)**")
     seg_plot = compute_segments(dplot, dry_thr)
     dry_lengths = seg_plot.loc[seg_plot["is_dry"], "length"]
     if not dry_lengths.empty:
         fig2 = plt.figure()
         bins = list(range(1, int(dry_lengths.max()) + 2))
-        plt.hist(dry_lengths, bins=bins, align="left", rwidth=0.8)
+        plt.hist(dry_lengths, bins=bins, align="left", rwidth=0.8")
         plt.xlabel("Duração do período seco (dias)")
         plt.ylabel("Frequência")
         plt.title("Histograma das durações dos períodos secos")
@@ -126,7 +162,6 @@ else:
     else:
         st.info("Não há períodos secos no recorte atual.")
 
-    # Histograma precipitação dias úmidos
     st.markdown("**Distribuição da precipitação em dias úmidos (mm)**")
     wet_mask = dplot["_pr"] > wet_thr
     wet_vals = dplot.loc[wet_mask, "_pr"]
@@ -140,7 +175,6 @@ else:
     else:
         st.info("Não há dias úmidos no recorte atual.")
 
-    # Barras por grupo
     if group_sel != "(sem agrupamento)":
         st.markdown("**Comparação entre grupos**")
         met_sel = st.selectbox(
