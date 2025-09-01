@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
+import os
 
 st.set_page_config(page_title="HY-INT | Dias Úmidos & Secos", layout="wide")
 
@@ -13,7 +14,6 @@ st.markdown(
     "(adimensional, normalizado pela média da amostra). Agora com **gráficos**."
 )
 
-uploaded = st.file_uploader("Envie um CSV com as colunas de data e precipitação", type=["csv"])
 wet_thr = st.number_input("Limiar de dias úmidos (mm) > ", value=1.0, step=0.1)
 dry_thr = st.number_input("Limiar de dias secos (mm) ≤ ", value=1.0, step=0.1)
 
@@ -26,7 +26,6 @@ def parse_date_pt(s):
     return pd.NaT
 
 def compute_segments(d, dry_thr):
-    """Retorna dataframe com segmentos consecutivos de seco/úmido e suas durações."""
     is_dry = d["_pr"] <= dry_thr
     seg_id = (is_dry != is_dry.shift(1)).cumsum()
     seg = d.groupby(seg_id, as_index=False).agg(
@@ -54,8 +53,13 @@ def compute_metrics(d, wet_thr, dry_thr):
         "n_dias_secos": int((d["_pr"] <= dry_thr).sum()),
     })
 
-if uploaded is not None:
-    df = pd.read_csv(uploaded)
+# Caminho fixo
+file_path = os.path.join(os.path.dirname(__file__), "indice_hy.csv")
+
+if not os.path.exists(file_path):
+    st.error(f"Arquivo {file_path} não encontrado. Coloque o 'indice_hy.csv' no mesmo diretório do app.")
+else:
+    df = pd.read_csv(file_path)
 
     precip_cols = [c for c in df.columns if c.strip().lower() in ["precipitacao","precipitação","chuva","pp","prcp","precisao","precisão"]]
     date_cols = [c for c in df.columns if c.strip().lower() in ["data","date","dia"]]
@@ -66,12 +70,10 @@ if uploaded is not None:
     group_opt = ["(sem agrupamento)"] + (group_cols or [])
     group_sel = st.selectbox("Coluna de agrupamento (opcional)", group_opt)
 
-    # Pré-processamento
     df["_date"] = df[date_col].apply(parse_date_pt)
     df = df.dropna(subset=["_date"]).sort_values("_date").reset_index(drop=True)
     df["_pr"] = pd.to_numeric(df[precip_col], errors="coerce").fillna(0.0)
 
-    # Cálculo
     if group_sel != "(sem agrupamento)":
         res = df.groupby(group_sel, as_index=False).apply(lambda g: compute_metrics(g, wet_thr, dry_thr)).reset_index(drop=True)
         first_col = group_sel
@@ -88,9 +90,8 @@ if uploaded is not None:
 
     st.download_button("Baixar resultados (CSV)", res.to_csv(index=False).encode("utf-8"), "resultados_hy_int.csv", "text/csv")
 
-    # ---------------------- GRÁFICOS ----------------------
+    # --------- Gráficos ---------
     st.markdown("### Gráficos")
-    # Se houver agrupamento, permitir selecionar um grupo para gráficos temporais
     if group_sel != "(sem agrupamento)":
         grupos_disponiveis = df[group_sel].dropna().unique().tolist()
         grupo_focus = st.selectbox("Selecione um grupo para gráficos temporais", ["(todos)"] + grupos_disponiveis)
@@ -101,7 +102,7 @@ if uploaded is not None:
     else:
         dplot = df.sort_values("_date").copy()
 
-    # 1) Série temporal da precipitação diária
+    # Série temporal
     st.markdown("**Série temporal de precipitação diária (mm)**")
     fig1 = plt.figure()
     plt.plot(dplot["_date"], dplot["_pr"])
@@ -110,7 +111,7 @@ if uploaded is not None:
     plt.title("Precipitação diária")
     st.pyplot(fig1)
 
-    # 2) Histograma das durações de períodos secos (baseado no recorte dplot)
+    # Histograma períodos secos
     st.markdown("**Distribuição das durações dos períodos secos (dias)**")
     seg_plot = compute_segments(dplot, dry_thr)
     dry_lengths = seg_plot.loc[seg_plot["is_dry"], "length"]
@@ -125,7 +126,7 @@ if uploaded is not None:
     else:
         st.info("Não há períodos secos no recorte atual.")
 
-    # 3) Histograma da precipitação em dias úmidos
+    # Histograma precipitação dias úmidos
     st.markdown("**Distribuição da precipitação em dias úmidos (mm)**")
     wet_mask = dplot["_pr"] > wet_thr
     wet_vals = dplot.loc[wet_mask, "_pr"]
@@ -139,7 +140,7 @@ if uploaded is not None:
     else:
         st.info("Não há dias úmidos no recorte atual.")
 
-    # 4) Barras comparando métricas por grupo (se houver grupos)
+    # Barras por grupo
     if group_sel != "(sem agrupamento)":
         st.markdown("**Comparação entre grupos**")
         met_sel = st.selectbox(
@@ -155,6 +156,3 @@ if uploaded is not None:
         plt.title(f"Comparação por grupo: {met_sel}")
         plt.xticks(rotation=45, ha="right")
         st.pyplot(fig4)
-
-else:
-    st.info("Envie um CSV para calcular os índices.")
