@@ -1,10 +1,8 @@
-# hy_int_app.py
 import os
 from datetime import datetime
-
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import streamlit as st
 
 st.set_page_config(page_title="HY-INT | Dias Úmidos & Secos", layout="wide")
@@ -14,17 +12,16 @@ st.markdown(
     "Calcule **Média da Precipitação em Dias Úmidos**, "
     "**Duração Média dos Períodos Secos** e **HY-INT** "
     "(adimensional, normalizado pela média da amostra). "
-    "Inclui **gráficos** e leitura **robusta** do CSV."
+    "Agora com **gráficos interativos em Plotly**."
 )
 
-# Parâmetros (podem ser ajustados no app)
+# Parâmetros ajustáveis
 wet_thr = st.number_input("Limiar de dias úmidos (mm) > ", value=1.0, step=0.1)
 dry_thr = st.number_input("Limiar de dias secos (mm) ≤ ", value=1.0, step=0.1)
 
 
-# ----------------- Utilidades -----------------
+# ----------------- Funções utilitárias -----------------
 def parse_date_pt(s):
-    """Tenta interpretar datas em formatos comuns no BR e ISO."""
     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
         try:
             return datetime.strptime(str(s), fmt)
@@ -34,42 +31,27 @@ def parse_date_pt(s):
 
 
 def safe_read_csv(path: str) -> pd.DataFrame:
-    """
-    Leitura robusta do CSV:
-      1) Tenta autodetectar separador (engine=python) em encodings comuns
-      2) Tenta separador ';'
-      3) Tenta separador ','
-    """
     encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252"]
 
-    # 1) Autodetect sep
     for enc in encodings:
         try:
             return pd.read_csv(path, encoding=enc, sep=None, engine="python")
         except Exception:
             pass
-
-    # 2) Força ';'
     for enc in encodings:
         try:
             return pd.read_csv(path, encoding=enc, sep=";")
         except Exception:
             pass
-
-    # 3) Força ','
     for enc in encodings:
         try:
             return pd.read_csv(path, encoding=enc, sep=",")
         except Exception:
             pass
-
-    raise RuntimeError("Falha ao ler o CSV. Verifique encoding e separador.")
+    raise RuntimeError("Falha ao ler o CSV. Verifique encoding/separador.")
 
 
 def compute_segments(d: pd.DataFrame, dry_thr: float) -> pd.DataFrame:
-    """
-    Cria segmentos consecutivos de seco/úmido e calcula a duração de cada segmento.
-    """
     is_dry = d["_pr"] <= dry_thr
     seg_id = (is_dry != is_dry.shift(1)).cumsum()
     seg = d.groupby(seg_id, as_index=False).agg(
@@ -82,23 +64,13 @@ def compute_segments(d: pd.DataFrame, dry_thr: float) -> pd.DataFrame:
 
 
 def compute_metrics(d: pd.DataFrame, wet_thr: float, dry_thr: float) -> pd.Series:
-    """
-    Calcula:
-      - média de precipitação em dias úmidos (> wet_thr)
-      - duração média dos períodos secos (consecutivos ≤ dry_thr)
-      - HY-INT bruto (produto) e contagens auxiliares
-    """
     d = d.sort_values("_date").copy()
-
     wet = d["_pr"] > wet_thr
     mean_wet_pr = d.loc[wet, "_pr"].mean() if wet.any() else 0.0
-
     seg = compute_segments(d, dry_thr)
     dry_spells = seg[seg["is_dry"]]
     mean_dry_spell = dry_spells["length"].mean() if not dry_spells.empty else 0.0
-
-    raw_product = mean_wet_pr * mean_dry_spell  # base p/ HY-INT
-
+    raw_product = mean_wet_pr * mean_dry_spell
     return pd.Series(
         {
             "media_precipitacao_dias_umidos": mean_wet_pr,
@@ -121,36 +93,16 @@ if not os.path.exists(file_path):
     )
     st.stop()
 
-try:
-    df = safe_read_csv(file_path)
-except Exception as e:
-    st.exception(e)
-    st.stop()
-
-# Normaliza nomes de colunas
+df = safe_read_csv(file_path)
 df.columns = [str(c).strip() for c in df.columns]
 
-# Tentativas de detecção automática das colunas (editáveis no app)
+# Colunas candidatas
 precip_candidates = [
-    "precipitacao",
-    "precipitação",
-    "chuva",
-    "pp",
-    "prcp",
-    "precisao",
-    "precisão",
+    "precipitacao", "precipitação", "chuva", "pp", "prcp", "precisao", "precisão"
 ]
 date_candidates = ["data", "date", "dia"]
-group_candidates = [
-    "bacia",
-    "estacao",
-    "estação",
-    "reservatorio",
-    "reservatório",
-    "local",
-    "id",
-    "serie",
-]
+group_candidates = ["bacia", "estacao", "estação", "reservatorio",
+                    "reservatório", "local", "id", "serie"]
 
 precip_cols = [c for c in df.columns if c.strip().lower() in precip_candidates]
 date_cols = [c for c in df.columns if c.strip().lower() in date_candidates]
@@ -163,8 +115,6 @@ group_sel = st.selectbox("Coluna de agrupamento (opcional)", group_opt)
 
 # Conversões
 df["_date"] = df[date_col].apply(parse_date_pt)
-
-# Trata números com vírgula decimal: "1.234,56" -> "1234.56"
 if df[precip_col].dtype == object:
     pr_clean = (
         df[precip_col]
@@ -175,10 +125,7 @@ if df[precip_col].dtype == object:
     df["_pr"] = pd.to_numeric(pr_clean, errors="coerce")
 else:
     df["_pr"] = pd.to_numeric(df[precip_col], errors="coerce")
-
 df["_pr"] = df["_pr"].fillna(0.0)
-
-# Remove datas inválidas e ordena
 df = df.dropna(subset=["_date"]).sort_values("_date").reset_index(drop=True)
 
 # ----------------- Cálculo dos índices -----------------
@@ -194,23 +141,12 @@ else:
     res.insert(0, "grupo", "serie_unica")
     first_col = "grupo"
 
-# HY-INT adimensional: normaliza pelo valor médio da amostra
 mean_raw = res["hy_int_raw"].replace(0, np.nan).mean()
 res["hy_int"] = np.where(
     (~np.isnan(mean_raw)) & (mean_raw != 0), res["hy_int_raw"] / mean_raw, np.nan
 )
 
-show_cols = [
-    first_col,
-    "media_precipitacao_dias_umidos",
-    "duracao_media_periodos_secos",
-    "hy_int",
-    "hy_int_raw",
-    "n_dias",
-    "n_dias_umidos",
-    "n_dias_secos",
-]
-st.dataframe(res[show_cols])
+st.dataframe(res)
 
 st.download_button(
     "Baixar resultados (CSV)",
@@ -219,10 +155,10 @@ st.download_button(
     "text/csv",
 )
 
-# ----------------- Gráficos -----------------
+# ----------------- Gráficos interativos -----------------
 st.markdown("### Gráficos")
 
-# Recorte para gráficos temporais
+# Recorte p/ gráficos
 if group_sel != "(sem agrupamento)":
     grupos_disponiveis = df[group_sel].dropna().unique().tolist()
     grupo_focus = st.selectbox(
@@ -235,61 +171,44 @@ if group_sel != "(sem agrupamento)":
 else:
     dplot = df.sort_values("_date").copy()
 
-# 1) Série temporal de precipitação diária
-st.markdown("**Série temporal de precipitação diária (mm)**")
-fig1 = plt.figure()
-plt.plot(dplot["_date"], dplot["_pr"])
-plt.xlabel("Data")
-plt.ylabel("Precipitação (mm)")
-plt.title("Precipitação diária")
-st.pyplot(fig1)
+# 1) Série temporal da precipitação diária
+fig1 = go.Figure()
+fig1.add_trace(go.Scatter(x=dplot["_date"], y=dplot["_pr"], mode="lines", name="Precipitação"))
+fig1.update_layout(title="Precipitação diária", xaxis_title="Data", yaxis_title="mm")
+st.plotly_chart(fig1, use_container_width=True)
 
-# 2) Histograma das durações dos períodos secos
-st.markdown("**Distribuição das durações dos períodos secos (dias)**")
+# 2) Histograma das durações de períodos secos
 seg_plot = compute_segments(dplot, dry_thr)
 dry_lengths = seg_plot.loc[seg_plot["is_dry"], "length"]
 if not dry_lengths.empty:
-    fig2 = plt.figure()
-    bins = list(range(1, int(dry_lengths.max()) + 2))
-    plt.hist(dry_lengths, bins=bins, align="left", rwidth=0.8)
-    plt.xlabel("Duração do período seco (dias)")
-    plt.ylabel("Frequência")
-    plt.title("Histograma das durações dos períodos secos")
-    st.pyplot(fig2)
+    fig2 = go.Figure()
+    fig2.add_trace(go.Histogram(x=dry_lengths, nbinsx=int(dry_lengths.max())))
+    fig2.update_layout(title="Distribuição das durações dos períodos secos",
+                       xaxis_title="Duração (dias)", yaxis_title="Frequência")
+    st.plotly_chart(fig2, use_container_width=True)
 else:
     st.info("Não há períodos secos no recorte atual.")
 
 # 3) Histograma da precipitação em dias úmidos
-st.markdown("**Distribuição da precipitação em dias úmidos (mm)**")
 wet_mask = dplot["_pr"] > wet_thr
 wet_vals = dplot.loc[wet_mask, "_pr"]
 if not wet_vals.empty:
-    fig3 = plt.figure()
-    plt.hist(wet_vals.dropna())
-    plt.xlabel("Precipitação (mm)")
-    plt.ylabel("Frequência")
-    plt.title("Histograma da precipitação em dias úmidos")
-    st.pyplot(fig3)
+    fig3 = go.Figure()
+    fig3.add_trace(go.Histogram(x=wet_vals))
+    fig3.update_layout(title="Distribuição da precipitação em dias úmidos",
+                       xaxis_title="Precipitação (mm)", yaxis_title="Frequência")
+    st.plotly_chart(fig3, use_container_width=True)
 else:
     st.info("Não há dias úmidos no recorte atual.")
 
-# 4) Barras comparando métricas por grupo (se houver grupos)
+# 4) Barras comparando métricas por grupo
 if group_sel != "(sem agrupamento)":
-    st.markdown("**Comparação entre grupos**")
     met_sel = st.selectbox(
         "Métrica para comparar entre grupos",
-        [
-            "media_precipitacao_dias_umidos",
-            "duracao_media_periodos_secos",
-            "hy_int",
-        ],
+        ["media_precipitacao_dias_umidos", "duracao_media_periodos_secos", "hy_int"]
     )
-    fig4 = plt.figure()
-    x = res[first_col].astype(str).tolist()
-    y = res[met_sel].astype(float).tolist()
-    plt.bar(x, y)
-    plt.xlabel("Grupo")
-    plt.ylabel(met_sel)
-    plt.title(f"Comparação por grupo: {met_sel}")
-    plt.xticks(rotation=45, ha="right")
-    st.pyplot(fig4)
+    fig4 = go.Figure()
+    fig4.add_trace(go.Bar(x=res[first_col].astype(str), y=res[met_sel]))
+    fig4.update_layout(title=f"Comparação entre grupos: {met_sel}",
+                       xaxis_title="Grupo", yaxis_title=met_sel)
+    st.plotly_chart(fig4, use_container_width=True)
