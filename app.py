@@ -3,8 +3,66 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+from io import BytesIO
 
 st.set_page_config(page_title="INT, DSL, HY-INT (norm.) e R95 — Anual, Sazonal e JFMAMJ", layout="wide")
+
+# =====================================================
+# Util: geração de arquivos para download
+# =====================================================
+def df_to_xls_bytes(df: pd.DataFrame, sheet_name: str = "Dados") -> bytes | None:
+    """Tenta gerar .xls (xlwt). Retorna None se xlwt não estiver disponível."""
+    try:
+        import xlwt  # noqa: F401  # apenas para checar disponibilidade
+        bio = BytesIO()
+        with pd.ExcelWriter(bio, engine="xlwt") as writer:
+            df.to_excel(writer, index=True, sheet_name=sheet_name)
+        bio.seek(0)
+        return bio.getvalue()
+    except Exception:
+        return None
+
+def df_to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "Dados") -> bytes:
+    """Gera .xlsx usando xlsxwriter (fallback para openpyxl)."""
+    bio = BytesIO()
+    engine = None
+    for eng in ("xlsxwriter", "openpyxl"):
+        try:
+            engine = eng
+            with pd.ExcelWriter(bio, engine=eng) as writer:
+                df.to_excel(writer, index=True, sheet_name=sheet_name)
+            break
+        except Exception:
+            bio = BytesIO()
+            continue
+    if engine is None:
+        # Último fallback: CSV dentro de xlsx writer indisponível (caso extremo)
+        # Aqui devolvemos CSV em bytes com extensão .xlsx não sendo ideal.
+        # Mas em ambientes normais um dos engines existe.
+        csv_bytes = df.to_csv(index=True).encode("utf-8")
+        return csv_bytes
+    bio.seek(0)
+    return bio.getvalue()
+
+def offer_xls_download(df: pd.DataFrame, base_filename: str, sheet_name: str = "Dados"):
+    """Mostra botão de download priorizando .xls; faz fallback para .xlsx se necessário."""
+    xls_bytes = df_to_xls_bytes(df, sheet_name=sheet_name)
+    if xls_bytes is not None:
+        st.download_button(
+            "⬇️ Baixar (XLS)",
+            data=xls_bytes,
+            file_name=f"{base_filename}.xls",
+            mime="application/vnd.ms-excel"
+        )
+    else:
+        xlsx_bytes = df_to_xlsx_bytes(df, sheet_name=sheet_name)
+        st.download_button(
+            "⬇️ Baixar (XLSX)",
+            data=xlsx_bytes,
+            file_name=f"{base_filename}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        st.info("Pacote 'xlwt' não disponível neste ambiente — gerado .xlsx em vez de .xls.")
 
 # =====================================================
 # Leitura / preparo
@@ -22,8 +80,6 @@ def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
       - converte tipos e adiciona colunas auxiliares
     """
     df = df.copy()
-
-    # Mapa case-insensitive das colunas
     cols_lower = {c.lower(): c for c in df.columns}
 
     # date
@@ -44,7 +100,6 @@ def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     else:
         raise ValueError("O CSV precisa ter a coluna 'precip' (ou 'pr').")
 
-    # Tipos e ordenação
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["precip"] = pd.to_numeric(df["precip"], errors="coerce")
     df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
@@ -220,13 +275,11 @@ with tab1:
         "DSL_dias","DSL_norm","HY_INT","CDD_dias","Dias_secos",
         "N_periodos_secos","R95pTOT_mm","R95pDAYS"
     ]
-    st.dataframe(
-        annual[cols].round({
-            "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
-            "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
-        }),
-        use_container_width=True
-    )
+    df_annual_view = annual[cols].round({
+        "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
+        "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
+    })
+    st.dataframe(df_annual_view, use_container_width=True)
 
     if not annual.empty:
         ultimo_ano = int(annual.index.max())
@@ -239,10 +292,11 @@ with tab1:
 
     st.download_button(
         "⬇️ Baixar anual (CSV)",
-        data=annual[cols].to_csv(index=True).encode("utf-8"),
+        data=df_annual_view.to_csv(index=True).encode("utf-8"),
         file_name="int_dsl_hyintNorm_r95_anual.csv",
         mime="text/csv"
     )
+    offer_xls_download(df_annual_view, base_filename="int_dsl_hyintNorm_r95_anual", sheet_name="Anual")
 
     st.markdown("### 📈 Gráficos (Anual)")
     # INT_norm e HY-INT (linhas)
@@ -293,20 +347,19 @@ with tab2:
         "DSL_dias","DSL_norm","HY_INT","CDD_dias","Dias_secos",
         "N_periodos_secos","R95pTOT_mm","R95pDAYS"
     ]
-    st.dataframe(
-        saz[cols].round({
-            "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
-            "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
-        }),
-        use_container_width=True
-    )
+    df_sazonal_view = saz[cols].round({
+        "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
+        "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
+    })
+    st.dataframe(df_sazonal_view, use_container_width=True)
 
     st.download_button(
         "⬇️ Baixar sazonal (CSV)",
-        data=saz[cols].to_csv(index=True).encode("utf-8"),
+        data=df_sazonal_view.to_csv(index=True).encode("utf-8"),
         file_name="int_dsl_hyintNorm_r95_sazonal.csv",
         mime="text/csv"
     )
+    offer_xls_download(df_sazonal_view, base_filename="int_dsl_hyintNorm_r95_sazonal", sheet_name="Sazonal")
 
     st.markdown("### 📈 Gráficos (Sazonal)")
     for metric, title, ylab in [
@@ -329,31 +382,19 @@ with tab3:
         "DSL_dias","DSL_norm","HY_INT","CDD_dias","Dias_secos",
         "N_periodos_secos","R95pTOT_mm","R95pDAYS"
     ]
-    st.dataframe(
-        sem[cols].round({
-            "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
-            "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
-        }),
-        use_container_width=True
-    )
+    df_sem_view = sem[cols].round({
+        "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
+        "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
+    })
+    st.dataframe(df_sem_view, use_container_width=True)
 
     st.download_button(
         "⬇️ Baixar JFMAMJ (CSV)",
-        data=sem[cols].to_csv(index=True).encode("utf-8"),
+        data=df_sem_view.to_csv(index=True).encode("utf-8"),
         file_name="int_dsl_hyintNorm_r95_JFMAMJ.csv",
         mime="text/csv"
     )
-
-    st.markdown("### 📈 Gráficos (JFMAMJ)")
-    for metric, title, ylab in [
-        ("INT_norm", "INT_norm — JFMAMJ", "INT_norm"),
-        ("HY_INT", "HY-INT (norm.) — JFMAMJ", "HY-INT (norm.)"),
-        ("DSL_norm", "DSL_norm — JFMAMJ", "DSL_norm"),
-        ("R95pTOT_mm", f"R95pTOT — JFMAMJ (base {base_ini}-{base_fim})", "R95pTOT (mm)")
-    ]:
-        fig = px.line(sem.reset_index(), x="ano", y=metric, markers=True, title=title)
-        fig.update_layout(xaxis_title="Ano", yaxis_title=ylab, hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
+    offer_xls_download(df_sem_view, base_filename="int_dsl_hyintNorm_r95_JFMAMJ", sheet_name="JFMAMJ")
 
 # Rodapé
 st.caption(
