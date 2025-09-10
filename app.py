@@ -11,11 +11,11 @@ df = load_data()
 st.title("🌧️ Cálculo do Índice de Intensidade da Precipitação (INT)")
 
 # Converter data se existir
-if "data" in df.columns:
-    df["data"] = pd.to_datetime(df["data"], errors="coerce")
-    df["ano"] = df["data"].dt.year
+if "date" in df.columns:
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["ano"] = df["date"].dt.year
 else:
-    st.error("A planilha precisa ter uma coluna chamada 'data'.")
+    st.error("A planilha precisa ter uma coluna chamada 'date'.")
     st.stop()
 
 if "precip" not in df.columns:
