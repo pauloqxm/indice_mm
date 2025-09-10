@@ -8,129 +8,50 @@ from io import BytesIO
 st.set_page_config(page_title="INT, DSL, HY-INT (norm.) e R95 — Anual, Sazonal e JFMAMJ", layout="wide")
 
 # =====================================================
-# Utils: geração de arquivos para download (XLS/XLSX)
+# Utils: gerar APENAS .XLS (sem fallback)
 # =====================================================
 def df_to_xls_bytes(df: pd.DataFrame, sheet_name: str = "Dados") -> bytes | None:
-    """Tenta gerar .xls (xlwt). Retorna None se xlwt não estiver disponível."""
+    """Gera .xls usando xlwt; retorna None se indisponível."""
     try:
-        import xlwt  # checa disponibilidade
+        import xlwt  # garante que xlwt está instalado
         bio = BytesIO()
         with pd.ExcelWriter(bio, engine="xlwt") as writer:
             df.to_excel(writer, index=True, sheet_name=sheet_name)
         bio.seek(0)
-        data = bio.getvalue()
-        return data if data else None
+        return bio.getvalue()
     except Exception:
         return None
 
-def df_to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "Dados") -> bytes:
-    """
-    Gera .xlsx de forma robusta. Tenta xlsxwriter e, se não houver, usa openpyxl.
-    Garante fechamento do writer e retorno de bytes não vazios.
-    """
-    # 1) xlsxwriter
-    try:
-        bio = BytesIO()
-        with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=True, sheet_name=sheet_name)
-        bio.seek(0)
-        data = bio.getvalue()
-        if data:
-            return data
-    except Exception:
-        pass
-
-    # 2) openpyxl (fallback)
-    bio = BytesIO()
-    try:
-        with pd.ExcelWriter(bio, engine="openpyxl", mode="w") as writer:
-            df.to_excel(writer, index=True, sheet_name=sheet_name)
-        bio.seek(0)
-        data = bio.getvalue()
-        if data:
-            return data
-    except Exception:
-        pass
-
-    # 3) fallback final (não usual): CSV em bytes
-    return df.to_csv(index=True).encode("utf-8")
-
-def offer_xls_download(df: pd.DataFrame, base_filename: str, sheet_name: str = "Dados"):
-    """Botão priorizando .xls; se indisponível, oferece .xlsx (robusto)."""
+def offer_xls_download_xls_only(df: pd.DataFrame, base_filename: str, sheet_name: str = "Dados"):
+    """Mostra APENAS botão .xls; se xlwt faltar, informa erro."""
     xls_bytes = df_to_xls_bytes(df, sheet_name=sheet_name)
-    if xls_bytes is not None:
-        st.download_button(
-            "⬇️ Baixar (XLS)",
-            data=xls_bytes,
-            file_name=f"{base_filename}.xls",
-            mime="application/vnd.ms-excel"
-        )
-    else:
-        xlsx_bytes = df_to_xlsx_bytes(df, sheet_name=sheet_name)
-        st.download_button(
-            "⬇️ Baixar (XLSX)",
-            data=xlsx_bytes,
-            file_name=f"{base_filename}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        st.info("Pacote 'xlwt' não disponível — gerado .xlsx em vez de .xls.")
+    if xls_bytes is None:
+        st.error("Não foi possível gerar .xls. Instale o pacote 'xlwt' (ex.: pip install xlwt).")
+        return
+    st.download_button(
+        "⬇️ Baixar (XLS)",
+        data=xls_bytes,
+        file_name=f"{base_filename}.xls",
+        mime="application/vnd.ms-excel"
+    )
 
 def _sanitize_sheet_name(name: str) -> str:
-    # limita a 31 chars e remove caracteres inválidos para nomes de planilha
     invalid = set(r'[]:*?/\\')
     safe = ''.join('_' if c in invalid else c for c in name)
     return safe[:31] if len(safe) > 31 else safe
 
-def multisheet_excel_bytes(dfs: dict[str, pd.DataFrame], prefer_xls: bool = True) -> tuple[bytes, str]:
-    """
-    Gera um workbook com múltiplas abas.
-    Retorna (bytes, ext) onde ext ∈ {'xls','xlsx'}.
-    Tenta .xls (xlwt) primeiro, depois .xlsx (xlsxwriter/openpyxl).
-    """
-    # 1) Tenta .xls
-    if prefer_xls:
-        try:
-            import xlwt  # noqa
-            bio = BytesIO()
-            with pd.ExcelWriter(bio, engine="xlwt") as writer:
-                for name, df in dfs.items():
-                    df.to_excel(writer, index=True, sheet_name=_sanitize_sheet_name(name))
-            bio.seek(0)
-            data = bio.getvalue()
-            if data:
-                return data, "xls"
-        except Exception:
-            pass
-
-    # 2) .xlsx (xlsxwriter)
+def multisheet_excel_bytes_xls_only(dfs: dict[str, pd.DataFrame]) -> bytes | None:
+    """Gera um workbook .xls com várias abas; retorna None se xlwt indisponível."""
     try:
+        import xlwt  # noqa
         bio = BytesIO()
-        with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
+        with pd.ExcelWriter(bio, engine="xlwt") as writer:
             for name, df in dfs.items():
                 df.to_excel(writer, index=True, sheet_name=_sanitize_sheet_name(name))
         bio.seek(0)
-        data = bio.getvalue()
-        if data:
-            return data, "xlsx"
+        return bio.getvalue()
     except Exception:
-        pass
-
-    # 3) .xlsx (openpyxl)
-    try:
-        bio = BytesIO()
-        with pd.ExcelWriter(bio, engine="openpyxl", mode="w") as writer:
-            for name, df in dfs.items():
-                df.to_excel(writer, index=True, sheet_name=_sanitize_sheet_name(name))
-        bio.seek(0)
-        data = bio.getvalue()
-        if data:
-            return data, "xlsx"
-    except Exception:
-        pass
-
-    # 4) fallback extremo: zip não implementado; retorna planilha única anual
-    only = list(dfs.values())[0]
-    return df_to_xlsx_bytes(only, "Dados"), "xlsx"
+        return None
 
 # =====================================================
 # Leitura / preparo
@@ -182,7 +103,7 @@ if uploaded is not None:
     raw = pd.read_csv(uploaded)
     df = _prepare_df(raw)
 else:
-    df = load_data_from_path("bacia_banabuiu.csv")
+    df = load_data_from_path("bacia_banabuiu_base.csv")
 
 # =====================================================
 # Parâmetros
@@ -384,7 +305,7 @@ with tab1:
         file_name="int_dsl_hyintNorm_r95_anual.csv",
         mime="text/csv"
     )
-    offer_xls_download(df_annual_view, base_filename="int_dsl_hyintNorm_r95_anual", sheet_name="Anual")
+    offer_xls_download_xls_only(df_annual_view, base_filename="int_dsl_hyintNorm_r95_anual", sheet_name="Anual")
 
     st.markdown("### 📈 Gráficos (Anual)")
     # INT_norm e HY-INT (linhas)
@@ -437,7 +358,7 @@ with tab2:
         file_name="int_dsl_hyintNorm_r95_sazonal.csv",
         mime="text/csv"
     )
-    offer_xls_download(df_sazonal_view, base_filename="int_dsl_hyintNorm_r95_sazonal", sheet_name="Sazonal")
+    offer_xls_download_xls_only(df_sazonal_view, base_filename="int_dsl_hyintNorm_r95_sazonal", sheet_name="Sazonal")
 
     st.markdown("### 📈 Gráficos (Sazonal)")
     for metric, title, ylab in [
@@ -462,7 +383,7 @@ with tab3:
         file_name="int_dsl_hyintNorm_r95_JFMAMJ.csv",
         mime="text/csv"
     )
-    offer_xls_download(df_sem_view, base_filename="int_dsl_hyintNorm_r95_JFMAMJ", sheet_name="JFMAMJ")
+    offer_xls_download_xls_only(df_sem_view, base_filename="int_dsl_hyintNorm_r95_JFMAMJ", sheet_name="JFMAMJ")
 
     st.markdown("### 📈 Gráficos (JFMAMJ)")
     for metric, title, ylab in [
@@ -476,21 +397,24 @@ with tab3:
         st.plotly_chart(fig, use_container_width=True)
 
 # =====================================================
-# Download único: 3 abas no mesmo arquivo
+# Download único: 3 abas no mesmo arquivo (.XLS apenas)
 # =====================================================
-st.markdown("## 📦 Download único (Anual + Sazonal + JFMAMJ)")
+st.markdown("## 📦 Download único (.XLS — Anual + Sazonal + JFMAMJ)")
 dfs_pack = {
     "Anual": df_annual_view,
     "Sazonal": df_sazonal_view,
     "JFMAMJ": df_sem_view
 }
-pack_bytes, pack_ext = multisheet_excel_bytes(dfs_pack, prefer_xls=True)
-st.download_button(
-    f"⬇️ Baixar pacote (.{pack_ext}) — 3 abas",
-    data=pack_bytes,
-    file_name=f"int_dsl_hyintNorm_r95_pacote.{pack_ext}",
-    mime="application/vnd.ms-excel" if pack_ext == "xls" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+pack_bytes = multisheet_excel_bytes_xls_only(dfs_pack)
+if pack_bytes is None:
+    st.error("Não foi possível gerar o arquivo .xls com múltiplas abas. Instale 'xlwt' (ex.: pip install xlwt).")
+else:
+    st.download_button(
+        "⬇️ Baixar pacote (.XLS) — 3 abas",
+        data=pack_bytes,
+        file_name="int_dsl_hyintNorm_r95_pacote.xls",
+        mime="application/vnd.ms-excel"
+    )
 
 # Rodapé
 st.caption(
