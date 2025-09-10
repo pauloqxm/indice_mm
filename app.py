@@ -18,7 +18,7 @@ def load_data(path: str) -> pd.DataFrame:
     df["precip"] = pd.to_numeric(df["precip"], errors="coerce")
     return df.sort_values("date").reset_index(drop=True)
 
-df = load_data("bacia_banabuiu_base.csv")
+df = load_data("bacia_banabuiu.csv")
 df["year"] = df["date"].dt.year
 
 st.title("🌧️ HY-INT e DSL (Duration of Dry Days)")
