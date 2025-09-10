@@ -103,7 +103,7 @@ if uploaded is not None:
     raw = pd.read_csv(uploaded)
     df = _prepare_df(raw)
 else:
-    df = load_data_from_path("bacia_banabuiu_base.csv")
+    df = load_data_from_path("bacia_banabuiu.csv")
 
 # =====================================================
 # Parâmetros
