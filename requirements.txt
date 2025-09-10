@@ -1,6 +1,5 @@
-streamlit
-pandas
-numpy
-matplotlib
-plotly
-xlwt
+streamlit>=1.32,<2
+pandas>=2.1,<2.3
+numpy>=1.26,<2
+plotly>=5.20,<6
+xlwt==1.3.0
