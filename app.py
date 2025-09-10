@@ -4,7 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 
-st.set_page_config(page_title="INT, DSL, HY-INT e R95 — Anual, Sazonal e JFMAMJ", layout="wide")
+st.set_page_config(page_title="INT, DSL, HY-INT (normalizado) e R95 — Anual, Sazonal e JFMAMJ", layout="wide")
 
 # =====================================================
 # Leitura / preparo
@@ -25,7 +25,7 @@ def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     df["month"] = df["date"].dt.month
     return df
 
-st.title("🌧️ INT, DSL, HY-INT e R95 — Anual, Sazonal (DJF/MAM/JJA/SON) e Semestre (JFMAMJ)")
+st.title("🌧️ INT, DSL, HY-INT (normalizado) e R95 — Anual, Sazonal (DJF/MAM/JJA/SON) e Semestre (JFMAMJ)")
 
 uploaded = st.file_uploader("Envie o CSV (colunas: date, precip)", type=["csv"])
 if uploaded is not None:
@@ -102,6 +102,7 @@ def compute_r95_threshold(df_base: pd.DataFrame, wet_thresh: float) -> float:
     return float(np.percentile(wet, 95))
 
 def compute_block_metrics(g: pd.DataFrame, wet_thresh: float, r95_thresh: float) -> pd.Series:
+    """Métricas básicas do bloco (sem HY-INT). HY-INT será calculado depois (normalizado)."""
     is_wet = g["precip"] >= wet_thresh
     is_dry = ~is_wet
 
@@ -112,7 +113,6 @@ def compute_block_metrics(g: pd.DataFrame, wet_thresh: float, r95_thresh: float)
     lengths = dry_spell_lengths(is_dry)
     DSL = float(np.mean(lengths)) if lengths else 0.0
     CDD = int(max(lengths)) if lengths else 0
-    HY = INT * DSL if pd.notna(INT) else np.nan
 
     # R95 (usando threshold do período-base)
     if pd.notna(r95_thresh):
@@ -128,7 +128,6 @@ def compute_block_metrics(g: pd.DataFrame, wet_thresh: float, r95_thresh: float)
             "Dias_chuvosos": rainy,
             "INT_mm_dia": INT,
             "DSL_dias": DSL,
-            "HY_INT": HY,
             "CDD_dias": CDD,
             "Dias_secos": int(is_dry.sum()),
             "N_periodos_secos": len(lengths),
@@ -137,13 +136,17 @@ def compute_block_metrics(g: pd.DataFrame, wet_thresh: float, r95_thresh: float)
         }
     )
 
-# Normalização por bloco
+# Normalização por bloco + HY-INT normalizado
 def add_normalized_cols(df_metrics: pd.DataFrame) -> pd.DataFrame:
     df_out = df_metrics.copy()
     mean_int = df_out["INT_mm_dia"].mean(skipna=True)
     mean_dsl = df_out["DSL_dias"].mean(skipna=True)
+
     df_out["INT_norm"] = df_out["INT_mm_dia"] / mean_int if mean_int and not np.isnan(mean_int) else np.nan
     df_out["DSL_norm"] = df_out["DSL_dias"] / mean_dsl if mean_dsl and not np.isnan(mean_dsl) else np.nan
+
+    # HY-INT = INT_norm × DSL_norm
+    df_out["HY_INT"] = df_out["INT_norm"] * df_out["DSL_norm"]
     return df_out
 
 # =====================================================
@@ -202,122 +205,23 @@ with tab1:
         c1.metric("Último ano", f"{ultimo_ano}")
         c2.metric("INT (mm/dia)", f"{annual.loc[ultimo_ano, 'INT_mm_dia']:.2f}" if pd.notna(annual.loc[ultimo_ano, "INT_mm_dia"]) else "—")
         c3.metric("DSL (dias)", f"{annual.loc[ultimo_ano, 'DSL_dias']:.2f}")
-        c4.metric("HY-INT", f"{annual.loc[ultimo_ano, 'HY_INT']:.3f}" if pd.notna(annual.loc[ultimo_ano, "HY_INT"]) else "—")
-        c5.metric("R95pTOT (mm)", f"{annual.loc[ultimo_ano, 'R95pTOT_mm']:.1f}" if pd.notna(annual.loc[ultimo_ano, "R95pTOT_mm"]) else "—")
+        c4.metric("HY-INT (norm.)", f"{annual.loc[ultimo_ano, 'HY_INT']:.3f}" if pd.notna(annual.loc[ultimo_ano, "HY_INT"]) else "—")
+        c5.metric("R95pTOT (mm)", f"{annual.loc[ultimo_ano, 'R95pTOT_mm']:.1f}" if pd.notna(annual.loc[ultimo_ano, 'R95pTOT_mm']) else "—")
 
     st.download_button(
         "⬇️ Baixar anual (CSV)",
         data=annual[cols].to_csv(index=True).encode("utf-8"),
-        file_name="int_dsl_hyint_r95_anual.csv",
+        file_name="int_dsl_hyintNorm_r95_anual.csv",
         mime="text/csv"
     )
 
     st.markdown("### 📈 Gráficos (Anual)")
-    # INT e HY-INT (linhas)
+    # INT_norm e HY-INT (linhas)
     fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(x=annual.index, y=annual["INT_mm_dia"], mode="lines+markers", name="INT (mm/dia)"))
-    fig1.add_trace(go.Scatter(x=annual.index, y=annual["HY_INT"], mode="lines+markers", name="HY-INT", yaxis="y2"))
+    fig1.add_trace(go.Scatter(x=annual.index, y=annual["INT_norm"], mode="lines+markers", name="INT_norm"))
+    fig1.add_trace(go.Scatter(x=annual.index, y=annual["HY_INT"], mode="lines+markers", name="HY-INT (norm.)", yaxis="y2"))
     fig1.update_layout(
-        title="INT e HY-INT por ano",
+        title="INT_norm e HY-INT (norm.) por ano",
         xaxis_title="Ano",
-        yaxis=dict(title="INT (mm/dia)"),
-        yaxis2=dict(title="HY-INT", overlaying="y", side="right"),
-        hovermode="x unified"
-    )
-    st.plotly_chart(fig1, use_container_width=True)
-
-    # DSL e CDD (barras)
-    fig2 = go.Figure(data=[
-        go.Bar(x=annual.index, y=annual["DSL_dias"], name="DSL (dias)"),
-        go.Bar(x=annual.index, y=annual["CDD_dias"], name="CDD (máx dias secos)")
-    ])
-    fig2.update_layout(title="DSL (médio) e CDD por ano", barmode="group", xaxis_title="Ano", hovermode="x unified")
-    st.plotly_chart(fig2, use_container_width=True)
-
-    # R95pTOT e R95pDAYS
-    fig3 = go.Figure()
-    fig3.add_trace(go.Bar(x=annual.index, y=annual["R95pTOT_mm"], name="R95pTOT (mm)"))
-    fig3.add_trace(go.Scatter(x=annual.index, y=annual["R95pDAYS"], mode="lines+markers", name="R95pDAYS", yaxis="y2"))
-    fig3.update_layout(
-        title=f"R95 (base {base_ini}-{base_fim}) — Total (mm) e Dias",
-        xaxis_title="Ano",
-        yaxis=dict(title="R95pTOT (mm)"),
-        yaxis2=dict(title="R95pDAYS (dias)", overlaying="y", side="right"),
-        hovermode="x unified"
-    )
-    st.plotly_chart(fig3, use_container_width=True)
-
-# ---------------- Sazonal ----------------
-with tab2:
-    st.subheader("📆 Resultados sazonais — DJF, MAM, JJA, SON")
-    saz = seasonal.reset_index().rename(columns={"season_year": "ano", "season": "temporada"}).set_index(["ano","temporada"])
-    cols = [
-        "PRCPTOT_mm","Dias_chuvosos","INT_mm_dia","INT_norm",
-        "DSL_dias","DSL_norm","HY_INT","CDD_dias","Dias_secos",
-        "N_periodos_secos","R95pTOT_mm","R95pDAYS"
-    ]
-    st.dataframe(saz[cols].round({
-        "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
-        "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
-    }), use_container_width=True)
-
-    st.download_button(
-        "⬇️ Baixar sazonal (CSV)",
-        data=saz[cols].to_csv(index=True).encode("utf-8"),
-        file_name="int_dsl_hyint_r95_sazonal.csv",
-        mime="text/csv"
-    )
-
-    st.markdown("### 📈 Gráficos (Sazonal)")
-    for metric, title, ylab in [
-        ("INT_mm_dia", "INT sazonal", "INT (mm/dia)"),
-        ("HY_INT", "HY-INT sazonal", "HY-INT"),
-        ("DSL_dias", "DSL sazonal", "DSL (dias)"),
-        ("R95pTOT_mm", f"R95pTOT sazonal (base {base_ini}-{base_fim})", "R95pTOT (mm)"),
-    ]:
-        piv = saz.reset_index().pivot(index="ano", columns="temporada", values=metric)
-        fig = px.line(piv, markers=True, title=title)
-        fig.update_layout(xaxis_title="Ano", yaxis_title=ylab, hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
-
-# ---------------- JFMAMJ ----------------
-with tab3:
-    st.subheader("🗓️ Semestre — JFMAMJ (Jan–Jun)")
-    sem = half_jfmamj.reset_index().rename(columns={"half_year": "ano", "half_label": "semestre"}).set_index(["ano","semestre"])
-    cols = [
-        "PRCPTOT_mm","Dias_chuvosos","INT_mm_dia","INT_norm",
-        "DSL_dias","DSL_norm","HY_INT","CDD_dias","Dias_secos",
-        "N_periodos_secos","R95pTOT_mm","R95pDAYS"
-    ]
-    st.dataframe(sem[cols].round({
-        "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
-        "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
-    }), use_container_width=True)
-
-    st.download_button(
-        "⬇️ Baixar JFMAMJ (CSV)",
-        data=sem[cols].to_csv(index=True).encode("utf-8"),
-        file_name="int_dsl_hyint_r95_JFMAMJ.csv",
-        mime="text/csv"
-    )
-
-    st.markdown("### 📈 Gráficos (JFMAMJ)")
-    for metric, title, ylab in [
-        ("INT_mm_dia", "INT — JFMAMJ", "INT (mm/dia)"),
-        ("HY_INT", "HY-INT — JFMAMJ", "HY-INT"),
-        ("DSL_dias", "DSL — JFMAMJ", "DSL (dias)"),
-        ("R95pTOT_mm", f"R95pTOT — JFMAMJ (base {base_ini}-{base_fim})", "R95pTOT (mm)"),
-    ]:
-        fig = px.line(sem.reset_index(), x="ano", y=metric, markers=True, title=title)
-        fig.update_layout(xaxis_title="Ano", yaxis_title=ylab, hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
-
-# Rodapé
-st.caption(
-    f"Definições — Dia úmido: precip ≥ limiar ({limiar_umido:.1f} mm). "
-    "INT = soma da precipitação / nº de dias chuvosos no bloco; "
-    "DSL = média das durações dos períodos secos no bloco; "
-    "HY-INT = INT × DSL; CDD = maior sequência seca; "
-    f"R95pTOT/R95pDAYS calculados com threshold do percentil 95 (dias úmidos) no período-base {base_ini}-{base_fim}. "
-    "INT_norm = INT / média(INT); DSL_norm = DSL / média(DSL) em cada bloco (anual, sazonal, JFMAMJ)."
-)
+        yaxis=dict(title="INT_norm"),
+        yaxis2=dict(title="HY-INT (norm.)", overlaying="y", side="rig
