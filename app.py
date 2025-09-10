@@ -8,44 +8,55 @@ from io import BytesIO
 st.set_page_config(page_title="INT, DSL, HY-INT (norm.) e R95 — Anual, Sazonal e JFMAMJ", layout="wide")
 
 # =====================================================
-# Util: geração de arquivos para download
+# Utils: geração de arquivos para download (XLS/XLSX)
 # =====================================================
 def df_to_xls_bytes(df: pd.DataFrame, sheet_name: str = "Dados") -> bytes | None:
     """Tenta gerar .xls (xlwt). Retorna None se xlwt não estiver disponível."""
     try:
-        import xlwt  # noqa: F401  # apenas para checar disponibilidade
+        import xlwt  # checa disponibilidade
         bio = BytesIO()
         with pd.ExcelWriter(bio, engine="xlwt") as writer:
             df.to_excel(writer, index=True, sheet_name=sheet_name)
         bio.seek(0)
-        return bio.getvalue()
+        data = bio.getvalue()
+        return data if data else None
     except Exception:
         return None
 
 def df_to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "Dados") -> bytes:
-    """Gera .xlsx usando xlsxwriter (fallback para openpyxl)."""
+    """
+    Gera .xlsx de forma robusta. Tenta xlsxwriter e, se não houver, usa openpyxl.
+    Garante fechamento do writer e retorno de bytes não vazios.
+    """
+    # 1) xlsxwriter
+    try:
+        bio = BytesIO()
+        with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=True, sheet_name=sheet_name)
+        bio.seek(0)
+        data = bio.getvalue()
+        if data:
+            return data
+    except Exception:
+        pass
+
+    # 2) openpyxl (fallback)
     bio = BytesIO()
-    engine = None
-    for eng in ("xlsxwriter", "openpyxl"):
-        try:
-            engine = eng
-            with pd.ExcelWriter(bio, engine=eng) as writer:
-                df.to_excel(writer, index=True, sheet_name=sheet_name)
-            break
-        except Exception:
-            bio = BytesIO()
-            continue
-    if engine is None:
-        # Último fallback: CSV dentro de xlsx writer indisponível (caso extremo)
-        # Aqui devolvemos CSV em bytes com extensão .xlsx não sendo ideal.
-        # Mas em ambientes normais um dos engines existe.
-        csv_bytes = df.to_csv(index=True).encode("utf-8")
-        return csv_bytes
-    bio.seek(0)
-    return bio.getvalue()
+    try:
+        with pd.ExcelWriter(bio, engine="openpyxl", mode="w") as writer:
+            df.to_excel(writer, index=True, sheet_name=sheet_name)
+        bio.seek(0)
+        data = bio.getvalue()
+        if data:
+            return data
+    except Exception:
+        pass
+
+    # 3) fallback final (não usual): CSV em bytes
+    return df.to_csv(index=True).encode("utf-8")
 
 def offer_xls_download(df: pd.DataFrame, base_filename: str, sheet_name: str = "Dados"):
-    """Mostra botão de download priorizando .xls; faz fallback para .xlsx se necessário."""
+    """Botão priorizando .xls; se indisponível, oferece .xlsx (robusto)."""
     xls_bytes = df_to_xls_bytes(df, sheet_name=sheet_name)
     if xls_bytes is not None:
         st.download_button(
@@ -62,7 +73,64 @@ def offer_xls_download(df: pd.DataFrame, base_filename: str, sheet_name: str = "
             file_name=f"{base_filename}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        st.info("Pacote 'xlwt' não disponível neste ambiente — gerado .xlsx em vez de .xls.")
+        st.info("Pacote 'xlwt' não disponível — gerado .xlsx em vez de .xls.")
+
+def _sanitize_sheet_name(name: str) -> str:
+    # limita a 31 chars e remove caracteres inválidos para nomes de planilha
+    invalid = set(r'[]:*?/\\')
+    safe = ''.join('_' if c in invalid else c for c in name)
+    return safe[:31] if len(safe) > 31 else safe
+
+def multisheet_excel_bytes(dfs: dict[str, pd.DataFrame], prefer_xls: bool = True) -> tuple[bytes, str]:
+    """
+    Gera um workbook com múltiplas abas.
+    Retorna (bytes, ext) onde ext ∈ {'xls','xlsx'}.
+    Tenta .xls (xlwt) primeiro, depois .xlsx (xlsxwriter/openpyxl).
+    """
+    # 1) Tenta .xls
+    if prefer_xls:
+        try:
+            import xlwt  # noqa
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine="xlwt") as writer:
+                for name, df in dfs.items():
+                    df.to_excel(writer, index=True, sheet_name=_sanitize_sheet_name(name))
+            bio.seek(0)
+            data = bio.getvalue()
+            if data:
+                return data, "xls"
+        except Exception:
+            pass
+
+    # 2) .xlsx (xlsxwriter)
+    try:
+        bio = BytesIO()
+        with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
+            for name, df in dfs.items():
+                df.to_excel(writer, index=True, sheet_name=_sanitize_sheet_name(name))
+        bio.seek(0)
+        data = bio.getvalue()
+        if data:
+            return data, "xlsx"
+    except Exception:
+        pass
+
+    # 3) .xlsx (openpyxl)
+    try:
+        bio = BytesIO()
+        with pd.ExcelWriter(bio, engine="openpyxl", mode="w") as writer:
+            for name, df in dfs.items():
+                df.to_excel(writer, index=True, sheet_name=_sanitize_sheet_name(name))
+        bio.seek(0)
+        data = bio.getvalue()
+        if data:
+            return data, "xlsx"
+    except Exception:
+        pass
+
+    # 4) fallback extremo: zip não implementado; retorna planilha única anual
+    only = list(dfs.values())[0]
+    return df_to_xlsx_bytes(only, "Dados"), "xlsx"
 
 # =====================================================
 # Leitura / preparo
@@ -263,6 +331,35 @@ half_jfmamj = half.xs("JFMAMJ", level="half_label", drop_level=False)
 half_jfmamj = add_normalized_cols(half_jfmamj)
 
 # =====================================================
+# Views (para tabelas e exportações)
+# =====================================================
+cols_show = [
+    "PRCPTOT_mm","Dias_chuvosos","INT_mm_dia","INT_norm",
+    "DSL_dias","DSL_norm","HY_INT","CDD_dias","Dias_secos",
+    "N_periodos_secos","R95pTOT_mm","R95pDAYS"
+]
+
+# Anual
+df_annual_view = annual[cols_show].round({
+    "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
+    "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
+})
+
+# Sazonal
+saz = seasonal.reset_index().rename(columns={"season_year": "ano", "season": "temporada"}).set_index(["ano","temporada"])
+df_sazonal_view = saz[cols_show].round({
+    "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
+    "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
+})
+
+# JFMAMJ
+sem = half_jfmamj.reset_index().rename(columns={"half_year": "ano", "half_label": "semestre"}).set_index(["ano","semestre"])
+df_sem_view = sem[cols_show].round({
+    "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
+    "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
+})
+
+# =====================================================
 # TABS: Anual | Sazonal | JFMAMJ
 # =====================================================
 tab1, tab2, tab3 = st.tabs(["Anual", "Sazonal (DJF/MAM/JJA/SON)", "Semestre JFMAMJ"])
@@ -270,15 +367,6 @@ tab1, tab2, tab3 = st.tabs(["Anual", "Sazonal (DJF/MAM/JJA/SON)", "Semestre JFMA
 # ---------------- Anual ----------------
 with tab1:
     st.subheader("📅 Resultados anuais")
-    cols = [
-        "PRCPTOT_mm","Dias_chuvosos","INT_mm_dia","INT_norm",
-        "DSL_dias","DSL_norm","HY_INT","CDD_dias","Dias_secos",
-        "N_periodos_secos","R95pTOT_mm","R95pDAYS"
-    ]
-    df_annual_view = annual[cols].round({
-        "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
-        "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
-    })
     st.dataframe(df_annual_view, use_container_width=True)
 
     if not annual.empty:
@@ -341,16 +429,6 @@ with tab1:
 # ---------------- Sazonal ----------------
 with tab2:
     st.subheader("📆 Resultados sazonais — DJF, MAM, JJA, SON")
-    saz = seasonal.reset_index().rename(columns={"season_year": "ano", "season": "temporada"}).set_index(["ano","temporada"])
-    cols = [
-        "PRCPTOT_mm","Dias_chuvosos","INT_mm_dia","INT_norm",
-        "DSL_dias","DSL_norm","HY_INT","CDD_dias","Dias_secos",
-        "N_periodos_secos","R95pTOT_mm","R95pDAYS"
-    ]
-    df_sazonal_view = saz[cols].round({
-        "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
-        "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
-    })
     st.dataframe(df_sazonal_view, use_container_width=True)
 
     st.download_button(
@@ -376,16 +454,6 @@ with tab2:
 # ---------------- JFMAMJ ----------------
 with tab3:
     st.subheader("🗓️ Semestre — JFMAMJ (Jan–Jun)")
-    sem = half_jfmamj.reset_index().rename(columns={"half_year": "ano", "half_label": "semestre"}).set_index(["ano","semestre"])
-    cols = [
-        "PRCPTOT_mm","Dias_chuvosos","INT_mm_dia","INT_norm",
-        "DSL_dias","DSL_norm","HY_INT","CDD_dias","Dias_secos",
-        "N_periodos_secos","R95pTOT_mm","R95pDAYS"
-    ]
-    df_sem_view = sem[cols].round({
-        "PRCPTOT_mm":1, "INT_mm_dia":2, "INT_norm":3,
-        "DSL_dias":2, "DSL_norm":3, "HY_INT":3, "R95pTOT_mm":1
-    })
     st.dataframe(df_sem_view, use_container_width=True)
 
     st.download_button(
@@ -395,6 +463,34 @@ with tab3:
         mime="text/csv"
     )
     offer_xls_download(df_sem_view, base_filename="int_dsl_hyintNorm_r95_JFMAMJ", sheet_name="JFMAMJ")
+
+    st.markdown("### 📈 Gráficos (JFMAMJ)")
+    for metric, title, ylab in [
+        ("INT_norm", "INT_norm — JFMAMJ", "INT_norm"),
+        ("HY_INT", "HY-INT (norm.) — JFMAMJ", "HY-INT (norm.)"),
+        ("DSL_norm", "DSL_norm — JFMAMJ", "DSL_norm"),
+        ("R95pTOT_mm", f"R95pTOT — JFMAMJ (base {base_ini}-{base_fim})", "R95pTOT (mm)")
+    ]:
+        fig = px.line(sem.reset_index(), x="ano", y=metric, markers=True, title=title)
+        fig.update_layout(xaxis_title="Ano", yaxis_title=ylab, hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
+
+# =====================================================
+# Download único: 3 abas no mesmo arquivo
+# =====================================================
+st.markdown("## 📦 Download único (Anual + Sazonal + JFMAMJ)")
+dfs_pack = {
+    "Anual": df_annual_view,
+    "Sazonal": df_sazonal_view,
+    "JFMAMJ": df_sem_view
+}
+pack_bytes, pack_ext = multisheet_excel_bytes(dfs_pack, prefer_xls=True)
+st.download_button(
+    f"⬇️ Baixar pacote (.{pack_ext}) — 3 abas",
+    data=pack_bytes,
+    file_name=f"int_dsl_hyintNorm_r95_pacote.{pack_ext}",
+    mime="application/vnd.ms-excel" if pack_ext == "xls" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
 
 # Rodapé
 st.caption(
