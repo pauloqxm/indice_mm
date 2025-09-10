@@ -15,9 +15,36 @@ def load_data_from_path(path: str) -> pd.DataFrame:
     return _prepare_df(df)
 
 def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
-    if "date" not in df.columns or "precip" not in df.columns:
-        raise ValueError("O CSV precisa ter as colunas 'date' e 'precip'.")
+    """
+    Prepara o DataFrame:
+      - aceita 'date' (case-insensitive)
+      - aceita 'precip' OU 'pr' (case-insensitive); se 'pr', renomeia para 'precip'
+      - converte tipos e adiciona colunas auxiliares
+    """
     df = df.copy()
+
+    # Mapa case-insensitive das colunas
+    cols_lower = {c.lower(): c for c in df.columns}
+
+    # date
+    if "date" not in cols_lower:
+        raise ValueError("O CSV precisa ter a coluna 'date'.")
+    date_col = cols_lower["date"]
+    if date_col != "date":
+        df = df.rename(columns={date_col: "date"})
+
+    # precip ou pr
+    if "precip" in cols_lower:
+        precip_col = cols_lower["precip"]
+        if precip_col != "precip":
+            df = df.rename(columns={precip_col: "precip"})
+    elif "pr" in cols_lower:
+        pr_col = cols_lower["pr"]
+        df = df.rename(columns={pr_col: "precip"})
+    else:
+        raise ValueError("O CSV precisa ter a coluna 'precip' (ou 'pr').")
+
+    # Tipos e ordenação
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["precip"] = pd.to_numeric(df["precip"], errors="coerce")
     df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
@@ -27,7 +54,7 @@ def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
 
 st.title("🌧️ INT, DSL, HY-INT (norm.) e R95 — Anual, Sazonal (DJF/MAM/JJA/SON) e Semestre (JFMAMJ)")
 
-uploaded = st.file_uploader("Envie o CSV (colunas: date, precip)", type=["csv"])
+uploaded = st.file_uploader("Envie o CSV (colunas: date, precip ou pr)", type=["csv"])
 if uploaded is not None:
     raw = pd.read_csv(uploaded)
     df = _prepare_df(raw)
