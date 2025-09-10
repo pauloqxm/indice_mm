@@ -8,12 +8,17 @@ from io import BytesIO
 st.set_page_config(page_title="INT, DSL, HY-INT (norm.) e R95 — Anual, Sazonal e JFMAMJ", layout="wide")
 
 # =====================================================
-# Utils: gerar APENAS .XLS (sem fallback)
+# Utils: Excel (XLS e XLSX)
 # =====================================================
-def df_to_xls_bytes(df: pd.DataFrame, sheet_name: str = "Dados") -> bytes | None:
+def _sanitize_sheet_name(name: str) -> str:
+    invalid = set(r'[]:*?/\\')
+    safe = ''.join('_' if c in invalid else c for c in name)
+    return safe[:31] if len(safe) > 31 else safe
+
+def df_to_xls_bytes(df: pd.DataFrame, sheet_name: str = "Dados"):
     """Gera .xls usando xlwt; retorna None se indisponível."""
     try:
-        import xlwt  # garante que xlwt está instalado
+        import xlwt  # requer pacote instalado
         bio = BytesIO()
         with pd.ExcelWriter(bio, engine="xlwt") as writer:
             df.to_excel(writer, index=True, sheet_name=sheet_name)
@@ -22,35 +27,95 @@ def df_to_xls_bytes(df: pd.DataFrame, sheet_name: str = "Dados") -> bytes | None
     except Exception:
         return None
 
-def offer_xls_download_xls_only(df: pd.DataFrame, base_filename: str, sheet_name: str = "Dados"):
-    """Mostra APENAS botão .xls; se xlwt faltar, informa erro."""
-    xls_bytes = df_to_xls_bytes(df, sheet_name=sheet_name)
-    if xls_bytes is None:
-        st.error("Não foi possível gerar .xls. Instale o pacote 'xlwt' (ex.: pip install xlwt).")
-        return
-    st.download_button(
-        "⬇️ Baixar (XLS)",
-        data=xls_bytes,
-        file_name=f"{base_filename}.xls",
-        mime="application/vnd.ms-excel"
-    )
-
-def _sanitize_sheet_name(name: str) -> str:
-    invalid = set(r'[]:*?/\\')
-    safe = ''.join('_' if c in invalid else c for c in name)
-    return safe[:31] if len(safe) > 31 else safe
-
-def multisheet_excel_bytes_xls_only(dfs: dict[str, pd.DataFrame]) -> bytes | None:
-    """Gera um workbook .xls com várias abas; retorna None se xlwt indisponível."""
+def df_to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "Dados"):
+    """Gera .xlsx tentando xlsxwriter e caindo para openpyxl."""
+    # 1) xlsxwriter
     try:
-        import xlwt  # noqa
         bio = BytesIO()
-        with pd.ExcelWriter(bio, engine="xlwt") as writer:
-            for name, df in dfs.items():
-                df.to_excel(writer, index=True, sheet_name=_sanitize_sheet_name(name))
+        with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=True, sheet_name=sheet_name)
         bio.seek(0)
-        return bio.getvalue()
+        data = bio.getvalue()
+        if data:
+            return data
     except Exception:
+        pass
+    # 2) openpyxl
+    try:
+        bio = BytesIO()
+        with pd.ExcelWriter(bio, engine="openpyxl", mode="w") as writer:
+            df.to_excel(writer, index=True, sheet_name=sheet_name)
+        bio.seek(0)
+        data = bio.getvalue()
+        if data:
+            return data
+    except Exception:
+        pass
+    return None
+
+def offer_excel_download(df: pd.DataFrame, base_filename: str, sheet_name: str, fmt: str):
+    """fmt: 'xls' ou 'xlsx'."""
+    if fmt == "xls":
+        data = df_to_xls_bytes(df, sheet_name=sheet_name)
+        if data is None:
+            st.error("Não foi possível gerar .xls. Instale 'xlwt' (ex.: pip install xlwt) ou selecione XLSX.")
+            return
+        st.download_button(
+            "⬇️ Baixar (XLS)",
+            data=data,
+            file_name=f"{base_filename}.xls",
+            mime="application/vnd.ms-excel"
+        )
+    else:
+        data = df_to_xlsx_bytes(df, sheet_name=sheet_name)
+        if data is None:
+            st.error("Não foi possível gerar .xlsx. Instale 'xlsxwriter' ou 'openpyxl'.")
+            return
+        st.download_button(
+            "⬇️ Baixar (XLSX)",
+            data=data,
+            file_name=f"{base_filename}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+def multisheet_excel_bytes(dfs: dict, fmt: str):
+    """Gera workbook com várias abas no formato solicitado ('xls' ou 'xlsx')."""
+    if fmt == "xls":
+        try:
+            import xlwt  # noqa
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine="xlwt") as writer:
+                for name, df in dfs.items():
+                    df.to_excel(writer, index=True, sheet_name=_sanitize_sheet_name(name))
+            bio.seek(0)
+            return bio.getvalue()
+        except Exception:
+            return None
+    else:
+        # 1) xlsxwriter
+        try:
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
+                for name, df in dfs.items():
+                    df.to_excel(writer, index=True, sheet_name=_sanitize_sheet_name(name))
+            bio.seek(0)
+            data = bio.getvalue()
+            if data:
+                return data
+        except Exception:
+            pass
+        # 2) openpyxl
+        try:
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine="openpyxl", mode="w") as writer:
+                for name, df in dfs.items():
+                    df.to_excel(writer, index=True, sheet_name=_sanitize_sheet_name(name))
+            bio.seek(0)
+            data = bio.getvalue()
+            if data:
+                return data
+        except Exception:
+            pass
         return None
 
 # =====================================================
@@ -126,6 +191,15 @@ with st.sidebar:
         options=anos, value=(base_ini_default, base_fim_default)
     )
 
+    st.divider()
+    excel_fmt = st.radio(
+        "Formato do Excel",
+        options=["XLSX (recomendado)", "XLS (legado)"],
+        index=0,
+        help="XLSX não depende de xlwt; XLS requer o pacote xlwt instalado."
+    )
+    excel_ext = "xlsx" if excel_fmt.startswith("XLSX") else "xls"
+
 if anos_sel:
     df = df[df["year"].isin(anos_sel)].copy()
 
@@ -151,7 +225,7 @@ df["half_year"] = df["year"]
 # =====================================================
 # Cálculos auxiliares
 # =====================================================
-def dry_spell_lengths(is_dry_bool: pd.Series) -> list[int]:
+def dry_spell_lengths(is_dry_bool: pd.Series):
     """Comprimentos das sequências consecutivas de True (dias secos)."""
     runs, run = [], 0
     for v in is_dry_bool:
@@ -305,10 +379,9 @@ with tab1:
         file_name="int_dsl_hyintNorm_r95_anual.csv",
         mime="text/csv"
     )
-    offer_xls_download_xls_only(df_annual_view, base_filename="int_dsl_hyintNorm_r95_anual", sheet_name="Anual")
+    offer_excel_download(df_annual_view, base_filename="int_dsl_hyintNorm_r95_anual", sheet_name="Anual", fmt=excel_ext)
 
     st.markdown("### 📈 Gráficos (Anual)")
-    # INT_norm e HY-INT (linhas)
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(x=annual.index, y=annual["INT_norm"], mode="lines+markers", name="INT_norm"))
     fig1.add_trace(go.Scatter(x=annual.index, y=annual["HY_INT"], mode="lines+markers", name="HY-INT (norm.)", yaxis="y2"))
@@ -321,7 +394,6 @@ with tab1:
     )
     st.plotly_chart(fig1, use_container_width=True)
 
-    # DSL_norm e CDD (barras)
     fig2 = go.Figure(data=[
         go.Bar(x=annual.index, y=annual["DSL_norm"], name="DSL_norm"),
         go.Bar(x=annual.index, y=annual["CDD_dias"], name="CDD (máx dias secos)")
@@ -334,7 +406,6 @@ with tab1:
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-    # R95pTOT e R95pDAYS
     fig3 = go.Figure()
     fig3.add_trace(go.Bar(x=annual.index, y=annual["R95pTOT_mm"], name="R95pTOT (mm)"))
     fig3.add_trace(go.Scatter(x=annual.index, y=annual["R95pDAYS"], mode="lines+markers", name="R95pDAYS", yaxis="y2"))
@@ -358,7 +429,7 @@ with tab2:
         file_name="int_dsl_hyintNorm_r95_sazonal.csv",
         mime="text/csv"
     )
-    offer_xls_download_xls_only(df_sazonal_view, base_filename="int_dsl_hyintNorm_r95_sazonal", sheet_name="Sazonal")
+    offer_excel_download(df_sazonal_view, base_filename="int_dsl_hyintNorm_r95_sazonal", sheet_name="Sazonal", fmt=excel_ext)
 
     st.markdown("### 📈 Gráficos (Sazonal)")
     for metric, title, ylab in [
@@ -383,7 +454,7 @@ with tab3:
         file_name="int_dsl_hyintNorm_r95_JFMAMJ.csv",
         mime="text/csv"
     )
-    offer_xls_download_xls_only(df_sem_view, base_filename="int_dsl_hyintNorm_r95_JFMAMJ", sheet_name="JFMAMJ")
+    offer_excel_download(df_sem_view, base_filename="int_dsl_hyintNorm_r95_JFMAMJ", sheet_name="JFMAMJ", fmt=excel_ext)
 
     st.markdown("### 📈 Gráficos (JFMAMJ)")
     for metric, title, ylab in [
@@ -397,23 +468,26 @@ with tab3:
         st.plotly_chart(fig, use_container_width=True)
 
 # =====================================================
-# Download único: 3 abas no mesmo arquivo (.XLS apenas)
+# Download único: 3 abas no mesmo arquivo (XLSX/XLS)
 # =====================================================
-st.markdown("## 📦 Download único (.XLS — Anual + Sazonal + JFMAMJ)")
+st.markdown("## 📦 Download único (Excel — Anual + Sazonal + JFMAMJ)")
 dfs_pack = {
     "Anual": df_annual_view,
     "Sazonal": df_sazonal_view,
     "JFMAMJ": df_sem_view
 }
-pack_bytes = multisheet_excel_bytes_xls_only(dfs_pack)
+pack_bytes = multisheet_excel_bytes(dfs_pack, fmt=excel_ext)
 if pack_bytes is None:
-    st.error("Não foi possível gerar o arquivo .xls com múltiplas abas. Instale 'xlwt' (ex.: pip install xlwt).")
+    if excel_ext == "xls":
+        st.error("Falha ao gerar .xls. Instale 'xlwt' (ex.: pip install xlwt), ou selecione XLSX.")
+    else:
+        st.error("Falha ao gerar .xlsx. Instale 'xlsxwriter' ou 'openpyxl'.")
 else:
     st.download_button(
-        "⬇️ Baixar pacote (.XLS) — 3 abas",
+        f"⬇️ Baixar pacote (.{excel_ext}) — 3 abas",
         data=pack_bytes,
-        file_name="int_dsl_hyintNorm_r95_pacote.xls",
-        mime="application/vnd.ms-excel"
+        file_name=f"int_dsl_hyintNorm_r95_pacote.{excel_ext}",
+        mime="application/vnd.ms-excel" if excel_ext == "xls" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 # Rodapé
